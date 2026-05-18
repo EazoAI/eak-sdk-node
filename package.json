@@ -1,9 +1,19 @@
 {
   "name": "@eazo/eak",
   "version": "0.1.0",
-  "description": "EAK SDK for Agent delegation, GUMem, and WebAgent.",
+  "description": "Unified Node.js SDK for EAK Agent delegation, GUMem memory, and WebAgent automation.",
   "license": "MIT",
   "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "keywords": [
+    "eak",
+    "eazo",
+    "agent",
+    "sdk",
+    "delegation",
+    "gumem",
+    "webagent"
+  ],
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,7 +26,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "README.zh-CN.md"
   ],
   "scripts": {
     "build": "tsup",
