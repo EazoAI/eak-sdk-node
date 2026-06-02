@@ -1,6 +1,6 @@
-import type { EAKResponse, EAKTransport, JsonObject, TokenInput } from "./types";
+import type { EAKResponse, EAKTransport, JsonObject, RuntimeTokenInput } from "./types";
 
-export interface GumemCreateSessionInput extends TokenInput {
+export interface GumemCreateSessionInput extends RuntimeTokenInput {
   userId?: string;
   sessionId?: string;
   /** @deprecated Use userId. */
@@ -11,7 +11,7 @@ export interface GumemCreateSessionInput extends TokenInput {
   metadata?: JsonObject;
 }
 
-export interface GumemAddMessagesInput extends TokenInput {
+export interface GumemAddMessagesInput extends RuntimeTokenInput {
   sessionId: string;
   messages: JsonObject[];
   sync?: boolean;
@@ -20,7 +20,7 @@ export interface GumemAddMessagesInput extends TokenInput {
   user_id?: string;
 }
 
-export interface GumemRecallInput extends TokenInput {
+export interface GumemRecallInput extends RuntimeTokenInput {
   sessionId?: string;
   query?: string;
   details?: boolean;
@@ -32,7 +32,7 @@ export interface GumemRecallInput extends TokenInput {
   metadata_filters?: JsonObject;
 }
 
-export interface GumemUploadResourceInput extends TokenInput {
+export interface GumemUploadResourceInput extends RuntimeTokenInput {
   userId?: string;
   sessionId?: string;
   /** @deprecated Use userId. */
@@ -49,6 +49,7 @@ export function createGumemNamespace(transport: EAKTransport) {
     createSession: <T = unknown>(input: GumemCreateSessionInput): Promise<EAKResponse<T>> =>
       transport.gumemJson("POST", "/api/sessions", input.token, {
         body: gumemBody(omit(input, "token")),
+        requiredScopes: ["gumem.memory:write"],
       }),
 
     addMessages: <T = unknown>(input: GumemAddMessagesInput): Promise<EAKResponse<T>> =>
@@ -56,7 +57,10 @@ export function createGumemNamespace(transport: EAKTransport) {
         "POST",
         `/api/sessions/${encodeURIComponent(input.sessionId)}/messages`,
         input.token,
-        { body: gumemBody(omit(input, "token", "sessionId")) },
+        {
+          body: gumemBody(omit(input, "token", "sessionId")),
+          requiredScopes: ["gumem.memory:write"],
+        },
       ),
 
     recall: <T = unknown>(input: GumemRecallInput): Promise<EAKResponse<T>> =>
@@ -67,6 +71,7 @@ export function createGumemNamespace(transport: EAKTransport) {
         {
           query: { query: input.query || "", details: input.details ?? false },
           body: gumemBody(omit(input, "token", "sessionId", "query", "details")),
+          requiredScopes: ["gumem.memory:read"],
         },
       ),
 
@@ -78,23 +83,29 @@ export function createGumemNamespace(transport: EAKTransport) {
       if (userId) form.set("user_id", userId);
       if (sessionId) form.set("session_id", sessionId);
       if (input.contentType) form.set("content_type", input.contentType);
-      return transport.gumemJson("POST", "/api/resources", input.token, { body: form });
+      return transport.gumemJson("POST", "/api/resources", input.token, {
+        body: form,
+        requiredScopes: ["gumem.memory:write"],
+      });
     },
 
     actions: {
-      record: <T = unknown>(input: TokenInput & JsonObject): Promise<EAKResponse<T>> =>
+      record: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
         transport.gumemJson("POST", "/api/user/actions", input.token, {
           body: omit(input, "token"),
+          requiredScopes: ["gumem.memory:write"],
         }),
 
-      recall: <T = unknown>(input: TokenInput & JsonObject): Promise<EAKResponse<T>> =>
+      recall: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
         transport.gumemJson("GET", "/api/user/actions/query", input.token, {
           query: omit(input, "token"),
+          requiredScopes: ["gumem.memory:read"],
         }),
 
-      stream: <T = unknown>(input: TokenInput & JsonObject): Promise<EAKResponse<T>> =>
+      stream: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
         transport.gumemJson("GET", "/api/user/actions/stream", input.token, {
           query: omit(input, "token"),
+          requiredScopes: ["gumem.memory:read"],
         }),
     },
   };

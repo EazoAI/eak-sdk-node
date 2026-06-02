@@ -1,48 +1,75 @@
-import type { EAKEvent, EAKResponse, EAKTransport, JsonObject, TokenInput } from "./types";
+import type { EAKEvent, EAKResponse, EAKTransport, JsonObject, RuntimeTokenInput } from "./types";
 
 export function createWebSearchNamespace(transport: EAKTransport) {
   return {
-    run: <T = unknown>(input: TokenInput & JsonObject): Promise<EAKResponse<T>> =>
+    run: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/web_search/runs", input.token, {
-        body: omit(input, "token"),
+        body: normalizeWebSearchRunInput(omit(input, "token")),
+        requiredScopes: ["webagent.task:run"],
       }),
 
-    get: <T = unknown>(input: TokenInput & { runId: string }): Promise<EAKResponse<T>> =>
+    get: <T = unknown>(input: RuntimeTokenInput & { runId: string }): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "GET",
         `/web_search/runs/${encodeURIComponent(input.runId)}`,
         input.token,
+        {
+          requiredScopes: ["webagent.task:read"],
+        },
       ),
 
     refine: <T = unknown>(
-      input: TokenInput & { runId: string } & JsonObject,
+      input: RuntimeTokenInput & { runId: string } & JsonObject,
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "POST",
         `/web_search/runs/${encodeURIComponent(input.runId)}/messages`,
         input.token,
-        { body: omit(input, "token", "runId") },
+        {
+          body: omit(input, "token", "runId"),
+          requiredScopes: ["webagent.task:run"],
+        },
       ),
 
     events: <T = unknown>(
-      input: TokenInput & { runId: string; lastEventId?: string },
+      input: RuntimeTokenInput & { runId: string; lastEventId?: string; signal?: AbortSignal },
     ): AsyncIterable<EAKEvent<T>> =>
       transport.webAgentSSE(
         `/web_search/runs/${encodeURIComponent(input.runId)}/events`,
         input.token,
-        { lastEventId: input.lastEventId },
+        {
+          lastEventId: input.lastEventId,
+          requiredScopes: ["webagent.task:read"],
+          signal: input.signal,
+        },
       ),
 
     cancel: <T = unknown>(
-      input: TokenInput & { runId: string; reason?: string },
+      input: RuntimeTokenInput & { runId: string; reason?: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "POST",
         `/web_search/runs/${encodeURIComponent(input.runId)}/cancel`,
         input.token,
-        { body: omit(input, "token", "runId") },
+        {
+          body: omit(input, "token", "runId"),
+          requiredScopes: ["webagent.task:run"],
+        },
       ),
   };
+}
+
+function normalizeWebSearchRunInput(input: JsonObject): JsonObject {
+  const body = renameKeys(input, {
+    maxResultsPerQuery: "max_results_per_query",
+    siteWhitelist: "site_whitelist",
+    siteBlacklist: "site_blacklist",
+  });
+  if (typeof body.query === "string" && !Array.isArray(body.queries)) {
+    body.queries = [body.query];
+  }
+  delete body.query;
+  return body;
 }
 
 function omit(value: object, ...keys: string[]): JsonObject {
@@ -50,6 +77,15 @@ function omit(value: object, ...keys: string[]): JsonObject {
   const out: JsonObject = {};
   for (const [key, item] of Object.entries(value)) {
     if (!skipped.has(key) && item !== undefined) out[key] = item;
+  }
+  return out;
+}
+
+function renameKeys(value: JsonObject, mapping: Record<string, string>): JsonObject {
+  const out: JsonObject = {};
+  for (const [key, item] of Object.entries(value)) {
+    const target = mapping[key] || key;
+    if (out[target] === undefined) out[target] = item;
   }
   return out;
 }

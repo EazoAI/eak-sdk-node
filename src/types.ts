@@ -14,6 +14,8 @@ export interface EAKOptions {
   accessKeyId?: string;
   /** @deprecated Use secretKey. */
   accessKeySecret?: string;
+  /** @deprecated Prefer host runtime discovery for normal EAK Console gateway access. */
+  eakBaseUrl?: string;
   /** @deprecated Use host for normal EAK Gateway access. */
   genauthBaseUrl?: string;
   /** @deprecated Use host for normal EAK Gateway access. */
@@ -22,6 +24,20 @@ export interface EAKOptions {
   webAgentBaseUrl?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
+}
+
+export interface EAKRuntimeConfig {
+  eakBaseUrl?: string;
+  genauthBaseUrl?: string;
+  gumemBaseUrl?: string;
+  webAgentBaseUrl?: string;
+  services?: {
+    eak?: string | { baseUrl?: string; url?: string; host?: string };
+    genauth?: string | { baseUrl?: string; url?: string; host?: string };
+    gumem?: string | { baseUrl?: string; url?: string; host?: string };
+    webAgent?: string | { baseUrl?: string; url?: string; host?: string };
+    webagent?: string | { baseUrl?: string; url?: string; host?: string };
+  };
 }
 
 export interface EAKMeta {
@@ -37,26 +53,43 @@ export interface EAKResponse<T = unknown> {
   meta: EAKMeta;
 }
 
-export interface DelegateAgentInput {
-  userId: string;
+export interface UserRef {
+  id: string;
+  subject?: string;
+  name?: string;
+  email?: string;
+  avatarUrl?: string;
+  [key: string]: unknown;
+}
+
+export interface DelegateTokenInput {
+  user?: UserRef;
+  /** @deprecated Use user. */
+  userId?: string;
   agent: string | { id: string; name?: string; description?: string };
   scopes: readonly string[];
   mode?: DelegationMode;
   redirectUri?: string;
-  expiresIn?: number;
+  state?: string;
+  expiresIn?: string | number;
+  idempotencyKey?: string;
 }
 
+/** @deprecated Use DelegateTokenInput. */
+export type DelegateAgentInput = DelegateTokenInput;
+
 export interface CompleteDelegateAgentInput {
-  grantId: string;
   code: string;
   state: string;
 }
 
-export interface DelegateAgentTokenResponse {
+export interface DelegateTokenResponse {
   mode: DelegationMode;
   tokenType: "Bearer";
+  token: string;
+  /** @deprecated Use token. */
   delegateAgentToken: string;
-  /** @deprecated Use delegateAgentToken. */
+  /** @deprecated Use token. */
   delegationToken?: string;
   expiresIn: number;
   grantId: string;
@@ -64,8 +97,11 @@ export interface DelegateAgentTokenResponse {
   grantedScopes?: string[];
 }
 
-/** @deprecated Use DelegateAgentTokenResponse. */
-export type DelegationTokenResponse = DelegateAgentTokenResponse;
+/** @deprecated Use DelegateTokenResponse. */
+export type DelegateAgentTokenResponse = DelegateTokenResponse;
+
+/** @deprecated Use DelegateTokenResponse. */
+export type DelegationTokenResponse = DelegateTokenResponse;
 
 export interface InteractiveDelegationResponse {
   mode: "interactive";
@@ -76,12 +112,16 @@ export interface InteractiveDelegationResponse {
 }
 
 export type DelegateAgentResponse =
-  | DelegateAgentTokenResponse
+  | DelegateTokenResponse
   | InteractiveDelegationResponse;
+
+export type DelegateTokenResult = DelegateAgentResponse;
 
 export interface TokenInput {
   token: string;
 }
+
+export type RuntimeTokenInput = TokenInput;
 
 export interface RawRequestInput extends TokenInput {
   method: EAKHttpMethod;
@@ -95,6 +135,7 @@ export interface RequestPayload {
   query?: JsonObject;
   body?: JsonObject | BodyInit;
   headers?: Record<string, string>;
+  requiredScopes?: readonly string[];
 }
 
 export interface EAKEvent<T = unknown> {
@@ -106,27 +147,39 @@ export interface EAKEvent<T = unknown> {
 export type EAKSSEEvent<T = unknown> = EAKEvent<T>;
 
 export interface EAKTransport {
+  eakJson<T>(
+    method: EAKHttpMethod,
+    path: string,
+    token?: string,
+    payload?: RequestPayload,
+  ): Promise<EAKResponse<T>>;
+  genauthJson<T>(
+    method: EAKHttpMethod,
+    path: string,
+    token?: string,
+    payload?: RequestPayload,
+  ): Promise<EAKResponse<T>>;
   gumemJson<T>(
     method: EAKHttpMethod,
     path: string,
-    token: string,
+    token?: string,
     payload?: RequestPayload,
   ): Promise<EAKResponse<T>>;
   gumemSSE<T>(
     path: string,
-    token: string,
-    payload?: RequestPayload & { lastEventId?: string },
+    token?: string,
+    payload?: RequestPayload & { lastEventId?: string; signal?: AbortSignal },
   ): AsyncIterable<EAKEvent<T>>;
   webAgentJson<T>(
     method: EAKHttpMethod,
     path: string,
-    token: string,
+    token?: string,
     payload?: RequestPayload,
   ): Promise<EAKResponse<T>>;
   webAgentSSE<T>(
     path: string,
-    token: string,
-    payload?: RequestPayload & { lastEventId?: string },
+    token?: string,
+    payload?: RequestPayload & { lastEventId?: string; signal?: AbortSignal },
   ): AsyncIterable<EAKEvent<T>>;
 }
 

@@ -3,10 +3,10 @@ import type {
   EAKResponse,
   EAKTransport,
   JsonObject,
-  TokenInput,
+  RuntimeTokenInput,
 } from "./types";
 
-export interface DoAnythingRunInput extends TokenInput {
+export interface DoAnythingRunInput extends RuntimeTokenInput {
   instruction?: string;
   /** @deprecated Use instruction. */
   instructions?: string;
@@ -33,81 +33,122 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
       return attachSessionId(run, sessionId);
     },
 
-    createSession: <T = unknown>(input: TokenInput & JsonObject): Promise<EAKResponse<T>> =>
+    createSession: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/do_anything/sessions", input.token, {
         body: omit(input, "token"),
+        requiredScopes: ["webagent.task:run"],
       }),
 
     createRun: <T = unknown>(
-      input: TokenInput & { sessionId: string } & JsonObject,
+      input: RuntimeTokenInput & { sessionId: string } & JsonObject,
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "POST",
         `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs`,
         input.token,
-        { body: omit(input, "token", "sessionId") },
+        {
+          body: normalizeDoAnythingRunInput(omit(input, "token", "sessionId")),
+          requiredScopes: ["webagent.task:run"],
+        },
       ),
 
     getRun: <T = unknown>(
-      input: TokenInput & { sessionId: string; runId: string },
+      input: RuntimeTokenInput & { sessionId: string; runId: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "GET",
         `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}`,
         input.token,
+        {
+          requiredScopes: ["webagent.task:read"],
+        },
       ),
 
     events: <T = unknown>(
-      input: TokenInput & { sessionId: string; runId?: string; lastEventId?: string },
+      input: RuntimeTokenInput & {
+        sessionId: string;
+        runId?: string;
+        lastEventId?: string;
+        signal?: AbortSignal;
+      },
     ): AsyncIterable<EAKEvent<T>> => {
       const path = input.runId
         ? `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}/events`
         : `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/events`;
       return transport.webAgentSSE(path, input.token, {
         lastEventId: input.lastEventId,
+        requiredScopes: ["webagent.task:read"],
+        signal: input.signal,
       });
     },
 
     intervene: <T = unknown>(
-      input: TokenInput & { sessionId: string; runId: string } & JsonObject,
+      input: RuntimeTokenInput & { sessionId: string; runId: string } & JsonObject,
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "POST",
         `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}/interventions`,
         input.token,
-        { body: omit(input, "token", "sessionId", "runId") },
+        {
+          body: omit(input, "token", "sessionId", "runId"),
+          requiredScopes: ["webagent.task:run"],
+        },
       ),
 
     cancel: <T = unknown>(
-      input: TokenInput & { sessionId: string; runId: string; reason?: string },
+      input: RuntimeTokenInput & { sessionId: string; runId: string; reason?: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "POST",
         `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}/cancel`,
         input.token,
-        { body: omit(input, "token", "sessionId", "runId") },
+        {
+          body: omit(input, "token", "sessionId", "runId"),
+          requiredScopes: ["webagent.task:run"],
+        },
       ),
 
     readArtifacts: <T = unknown>(
-      input: TokenInput & { sessionId: string; artifactId: string },
+      input: RuntimeTokenInput & { sessionId: string; artifactId: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "GET",
         `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/artifacts/${encodeURIComponent(input.artifactId)}`,
         input.token,
+        {
+          requiredScopes: ["webagent.task:read"],
+        },
       ),
 
     readRecording: <T = unknown>(
-      input: TokenInput & { sessionId: string },
+      input: RuntimeTokenInput & { sessionId: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "GET",
         `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/recording`,
         input.token,
+        {
+          requiredScopes: ["webagent.task:read"],
+        },
       ),
   };
 
   return namespace;
+}
+
+function normalizeDoAnythingRunInput(input: JsonObject): JsonObject {
+  const body = renameKeys(input, {
+    instruction: "instructions",
+    profileId: "profile_id",
+    workspaceId: "workspace_id",
+    proxyCountryCode: "proxy_country_code",
+    keepAlive: "keep_alive",
+    allowedActions: "allowed_actions",
+    maxDurationMinutes: "max_duration_minutes",
+    outputSchema: "output_schema",
+    callbackUrl: "callback_url",
+  });
+  return body;
 }
 
 function attachSessionId<T>(response: EAKResponse<T>, sessionId: string): EAKResponse<T> {
@@ -129,6 +170,15 @@ function omit(value: object, ...keys: string[]): JsonObject {
   const out: JsonObject = {};
   for (const [key, item] of Object.entries(value)) {
     if (!skipped.has(key) && item !== undefined) out[key] = item;
+  }
+  return out;
+}
+
+function renameKeys(value: JsonObject, mapping: Record<string, string>): JsonObject {
+  const out: JsonObject = {};
+  for (const [key, item] of Object.entries(value)) {
+    const target = mapping[key] || key;
+    if (out[target] === undefined) out[target] = item;
   }
   return out;
 }

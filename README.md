@@ -5,81 +5,108 @@
 [![Package manager](https://img.shields.io/badge/package%20manager-pnpm-f69220)](https://pnpm.io/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
-Unified Node.js SDK for EAK Agent delegation, GUMem memory, and WebAgent automation.
+Unified Node.js SDK for EAK Agent delegation, GUMem memory, WebAgent automation, web search, and monitoring.
 
-`@eazo/eak` gives a server-side application one entry point for letting an Agent act on behalf of a user. Your application signs a delegation request with EAK AK/SK, receives a short-lived `delegateAgentToken`, and then uses that token for memory, web search, browser automation, and monitoring calls.
+`@eazo/eak` gives a trusted server one compact way to let an Agent act for a GenAuth user. Your service verifies the user, requests short-lived delegation with `delegateToken`, and then uses the returned token in GUMem, WebAgent, Web Search, Do Anything, and Track calls. The SDK discovers runtime services and exchanges delegation tokens for product tokens internally.
 
-AK/SK credentials must stay on a trusted server. They must never be sent to browsers, mobile apps, public CLI config, or untrusted runtimes.
+AK/SK credentials must stay on a trusted server. Do not ship them to browsers, mobile apps, public CLI config, or untrusted Agent runtimes.
 
 Read this in [Chinese](./README.zh-CN.md).
 
 ## Why EAK
 
-Agents that perform real work need more than a backend API key. They need a user boundary, explicit scopes, short-lived authorization, streamable progress, and audit metadata that explains what happened later.
+Agents that perform real work need more than a backend API key. They need a user boundary, explicit scopes, expiry, observable execution, and audit metadata that explains what happened later.
 
-EAK keeps that model compact:
+EAK keeps that model small:
 
-- One public SDK entry: `new EAK({ accessKey, secretKey, host })`.
-- One gateway host: no GenAuth, GUMem, or WebAgent base URL setup for normal users.
-- One business token: `delegateAgentToken` is used for downstream capability calls.
-- Capability-first namespaces: `gumem`, `webSearch`, `doAnything`, and `track`.
-- Scope bundles for quick starts, low-level scopes for production hardening.
+- One SDK entry: `new EzaoAgentKit({ accessKey, secretKey })`.
+- One discovery host: `host` points to the EAK Console/SDK gateway, defaults to `https://eak.eazo.ai/dashboard`, and the SDK reads downstream runtime URLs from `/api/v3/eak/runtime-config`.
+- One delegation step: call `delegateToken`, then pass `data.token` to product capability calls.
+- Capability-first namespaces: `eak`, `genauth`, `gumem`, `webSearch`, `doAnything`, and `track`.
+- Readable scope strings for least-privilege authorization.
 - Typed errors with `requestId`, `traceId`, `auditId`, and `retryable`.
 
 ## Installation
 
 ```bash
+npm install @eazo/eak
+# or
 pnpm add @eazo/eak
+# or
+yarn add @eazo/eak
 ```
 
 Requirements:
 
 - Node.js 18 or later.
-- A server-side runtime with `fetch`. Node.js 18 includes a global `fetch`.
-- An EAK access key and secret key created in EAK Console.
-- An EAK Gateway host such as `https://eak.eazo.ai` or your private deployment host.
+- A server-side runtime with `fetch`.
+- EAK `accessKey` and `secretKey` created in EAK Console at `https://eak.eazo.ai/dashboard`.
+- Optional `host` for private or local EAK deployments. It defaults to `https://eak.eazo.ai/dashboard`.
+
+You do not pass `tenantId` during normal SDK initialization. The AK/SK is already bound to the tenant and application boundary in EAK.
+
+## AI Skill
+
+EAK can also be exposed to AI coding tools through a Skill package, so Codex, Claude Code, or internal Agents can follow the same authorization model.
+
+Install the EAK Skill:
+
+```bash
+npx skills add https://github.com/eazo-ai/eak --skill eak
+```
+
+If you only want to install it for Claude Code, specify the Agent:
+
+```bash
+npx skills add https://github.com/eazo-ai/eak --agent claude-code --skill eak
+```
 
 ## Quick Start
 
 ```ts
-import { EAK, EAKEventTypes, EAKScopeBundles } from "@eazo/eak";
+import { EzaoAgentKit, EAKEventTypes } from "@eazo/eak";
 
-const eak = new EAK({
+const eak = new EzaoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
   secretKey: process.env.EAK_SECRET_KEY!,
-  host: process.env.EAK_HOST ?? "https://eak.eazo.ai",
 });
 
-const { data: delegation } = await eak.delegateAgent({
+const delegation = await eak.delegateToken({
   userId: "user_1",
-  agent: {
-    id: "research-assistant",
-    name: "Research Assistant",
-  },
+  agent: "sales-assistant",
+  scopes: [
+    "gumem.memory:read",
+    "gumem.message:write",
+    "webagent.web_search:run",
+    "webagent.web_search:read",
+    "webagent.do_anything:session",
+    "webagent.do_anything:run",
+    "webagent.do_anything:events",
+  ],
   mode: "silent",
-  scopes: EAKScopeBundles.AGENT_DO_ANYTHING_BASIC,
 });
 
-const token = delegation.delegateAgentToken;
+const token = delegation.data.token;
 
 const memory = await eak.gumem.recall({
   token,
-  sessionId: "default",
-  query: "What should this assistant remember before researching the account?",
+  sessionId: "customer-brief",
+  query: "What user preferences should the assistant remember?",
 });
 
 const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
   token,
-  instruction: "Open the target website and summarize the latest product changes.",
+  instruction: "Open the customer website and summarize recent product updates.",
   stream: {
-    events: [EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME],
+    events: [
+      EAKEventTypes.DO_ANYTHING_ACTION,
+      EAKEventTypes.DO_ANYTHING_OBSERVATION,
+      EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME,
+      EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED,
+      EAKEventTypes.DO_ANYTHING_FINAL,
+    ],
   },
-  tools: {
-    gumem: { actions: ["recall"] },
-  },
-  context: {
-    memory: memory.data,
-  },
+  context: { memory: memory.data },
 });
 
 for await (const event of eak.doAnything.events({
@@ -90,87 +117,77 @@ for await (const event of eak.doAnything.events({
   if (event.event === EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME) {
     renderBrowserFrame(event.data);
   }
+
+  if (event.event === EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED) {
+    await showUserConfirmation(event.data);
+  }
 }
 ```
 
-## Core Concepts
+## Authorization Model
 
-### EAK Gateway
+### Runtime Discovery
 
-`host` points to the EAK Gateway. The SDK sends delegation, GUMem, and WebAgent requests through that gateway. Application code should not configure separate GenAuth, GUMem, or WebAgent URLs for normal usage.
+`host` points to the EAK Console/SDK gateway, not directly to GenAuth, GUMem, or WebAgent. If you do not pass `host`, the SDK uses the online EAK Console gateway by default:
+
+```text
+https://eak.eazo.ai/dashboard
+```
+
+The SDK signs a request to:
+
+```text
+GET /api/v3/eak/runtime-config
+```
+
+The response provides runtime base URLs for EAK, GenAuth, GUMem, and WebAgent. Application code should not configure those product URLs separately for normal usage.
 
 ### Server-Side AK/SK
 
-`accessKey` and `secretKey` identify the application or tenant boundary already configured in EAK Console. The SDK uses them only to sign trusted server-side delegation requests.
+`accessKey` and `secretKey` identify the tenant and application boundary configured in EAK Console. The SDK uses them to sign trusted server-side EAK requests, including delegation and product-token exchange.
 
 ### Delegation Token
 
-`delegateAgentToken` is the short-lived token that downstream capability calls use. It carries the authorized user, Agent, scopes, expiry, and audit context. Treat it as a sensitive bearer token.
+`delegateToken` binds four things:
 
-### Scopes and Bundles
+- the current user id
+- the Agent id
+- the requested scopes
+- the token expiry and audit context
 
-Scopes describe what the Agent is allowed to do. Bundles such as `EAKScopeBundles.AGENT_DO_ANYTHING_BASIC` make first integration easier, while `EAKScopes.*` lets production code request the smallest practical capability set.
-
-## Authorization Flows
-
-### Silent Delegation
-
-Use silent delegation for low-risk actions that can be granted by policy.
+Product calls receive `token: delegation.data.token`. If that token is an EAK delegation token, the SDK exchanges it internally for the correct GUMem or WebAgent product access token before calling the downstream service.
 
 ```ts
-import { EAK, EAKScopeBundles } from "@eazo/eak";
-
-const eak = new EAK({
-  accessKey: process.env.EAK_ACCESS_KEY!,
-  secretKey: process.env.EAK_SECRET_KEY!,
-  host: process.env.EAK_HOST!,
-});
-
-const { data } = await eak.delegateAgent({
+const delegation = await eak.delegateToken({
   userId: "user_1",
-  agent: { id: "support-assistant", name: "Support Assistant" },
+  agent: "research-assistant",
+  scopes: ["gumem.memory:read"],
   mode: "silent",
-  scopes: EAKScopeBundles.GUMEM_READONLY,
 });
 
-const token = data.delegateAgentToken;
+await eak.gumem.recall({
+  token: delegation.data.token,
+  query: "research preferences",
+});
 ```
 
-### Interactive Delegation
+`delegateAgent` and `completeDelegateAgent` remain as deprecated compatibility aliases for older interactive flows. New integrations should start with `delegateToken`.
 
-Use interactive delegation for actions that require explicit user confirmation, such as browser takeover, site login, long-running monitoring, or access to sensitive artifacts.
+## Choosing Scopes
 
-```ts
-import { EAKScopes } from "@eazo/eak";
+Use explicit scope strings so the requested permission boundary is visible in code.
 
-const { data: delegation } = await eak.delegateAgent({
-  userId: "user_1",
-  agent: { id: "browser-agent", name: "Browser Agent" },
-  mode: "interactive",
-  redirectUri: "https://app.example.com/eak/callback",
-  scopes: [
-    EAKScopes.WEBAGENT_BROWSER_USE_TAKE_CONTROL,
-    EAKScopes.WEBAGENT_SITE_LOGIN_REQUEST,
-    EAKScopes.WEBAGENT_SITE_LOGIN_CONFIRM,
-  ],
-});
+| Scenario | Useful scopes | User-facing meaning |
+| --- | --- | --- |
+| Read user memory | `gumem.memory:read` | Agent can read relevant historical preferences. |
+| Write task results | `gumem.message:write`, `gumem.action:write` | Agent can write this task's confirmed result back to GUMem. |
+| Search public web | `webagent.web_search:run`, `webagent.web_search:read` | Agent can search public pages and read search results. |
+| Run a bounded web task | `webagent.do_anything:session`, `webagent.do_anything:run`, `webagent.do_anything:events` | Agent can run a visible web task and stream progress. |
+| Create a monitor | `webagent.track:monitor_create`, `webagent.track:events` | Agent can monitor configured pages and emit changes. |
 
-if ("authorizationUrl" in delegation) {
-  await savePendingGrant({
-    grantId: delegation.grantId,
-    state: delegation.state,
-  });
-  redirectUser(delegation.authorizationUrl);
-}
+Silent mode is usually appropriate for low-risk actions such as reading current-user memory, writing a confirmed summary, or searching public web pages.
 
-const { data: completed } = await eak.completeDelegateAgent({
-  grantId: pendingGrant.grantId,
-  code: callbackQuery.code,
-  state: callbackQuery.state,
-});
-
-const token = completed.delegateAgentToken;
-```
+Interactive mode is recommended for higher-risk actions such as browser takeover, external site login, long-running monitoring, form submission, or access to sensitive artifacts and recordings.
 
 ## Capability Examples
 
@@ -189,7 +206,7 @@ await eak.gumem.addMessages({
   sessionId: "account-research",
   messages: [
     {
-      role: "user",
+      role: "assistant",
       content: "The customer prefers concise implementation checklists.",
     },
   ],
@@ -198,7 +215,7 @@ await eak.gumem.addMessages({
 const context = await eak.gumem.recall({
   token,
   sessionId: "account-research",
-  query: "What user preferences should the assistant keep in mind?",
+  query: "What should the assistant remember before the meeting?",
   details: true,
 });
 ```
@@ -209,11 +226,12 @@ const context = await eak.gumem.recall({
 const search = await eak.webSearch.run<{ id: string }>({
   token,
   query: "latest product updates from example.com",
+  maxResultsPerQuery: 5,
 });
 
 for await (const event of eak.webSearch.events({
   token,
-  runId: String(search.data.id),
+  runId: search.data.id,
 })) {
   console.log(event.event, event.data);
 }
@@ -222,16 +240,24 @@ for await (const event of eak.webSearch.events({
 ### Do Anything
 
 ```ts
-const run = await eak.doAnything.run({
+const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
   token,
   instruction: "Compare pricing pages and return the changed plans.",
   stream: {
     events: [
       EAKEventTypes.DO_ANYTHING_ACTION,
       EAKEventTypes.DO_ANYTHING_OBSERVATION,
+      EAKEventTypes.DO_ANYTHING_ARTIFACT,
       EAKEventTypes.DO_ANYTHING_FINAL,
     ],
   },
+});
+
+await eak.doAnything.cancel({
+  token,
+  sessionId: run.data.sessionId,
+  runId: run.data.id,
+  reason: "User stopped the task",
 });
 ```
 
@@ -251,15 +277,38 @@ await eak.track.runNow({
 });
 ```
 
-## API Reference
+### GenAuth and EAK Control Plane
+
+```ts
+const profile = await eak.genauth.userInfo({
+  accessToken: process.env.GENAUTH_ACCESS_TOKEN!,
+});
+
+const workspaces = await eak.eak.workspaces.list({
+  token: process.env.GENAUTH_ACCESS_TOKEN!,
+});
+
+const credential = await eak.eak.credentials.create({
+  token: process.env.GENAUTH_ACCESS_TOKEN!,
+  eakTenantId: "eak_tnt_1",
+  allowedScopes: [
+    "webagent.do_anything:session",
+    "webagent.do_anything:run",
+    "webagent.do_anything:events",
+  ],
+});
+```
+
+GenAuth and EAK management-plane calls use a GenAuth access token. Runtime capability calls use `delegateToken` output.
+
+## API Surface
 
 ### Client
 
 ```ts
-const eak = new EAK({
+const eak = new EzaoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
   secretKey: process.env.EAK_SECRET_KEY!,
-  host: process.env.EAK_HOST!,
   timeoutMs: 30_000,
 });
 ```
@@ -268,21 +317,29 @@ const eak = new EAK({
 | --- | --- | --- | --- |
 | `accessKey` | `string` | Yes | EAK access key from EAK Console. |
 | `secretKey` | `string` | Yes | EAK secret key from EAK Console. |
-| `host` | `string` | Yes | EAK Gateway host. |
+| `host` | `string` | No | EAK Console/SDK gateway host. Defaults to the online EAK Console gateway, `https://eak.eazo.ai/dashboard`. |
 | `fetch` | `typeof fetch` | No | Custom transport implementation. |
 | `timeoutMs` | `number` | No | Request timeout. Defaults to `30000`. |
 
-Older option aliases are accepted by the SDK for compatibility, but new code should use `accessKey`, `secretKey`, and `host`.
+Compatibility aliases are exported for older callers:
+
+```ts
+import { EAK, EazoAgentKit, EzaoAgentKit } from "@eazo/eak";
+```
 
 ### Namespaces
 
 | Namespace | Methods |
 | --- | --- |
-| Delegation | `delegateAgent`, `completeDelegateAgent` |
+| Delegation | `delegateToken`, deprecated aliases `delegateAgent`, `completeDelegateAgent` |
+| EAK | `workspaces.list`, `workspaces.get`, `workspaces.create`, `workspaces.update`, `credentials.list`, `credentials.create`, `credentials.rotate`, `credentials.update` |
+| GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
 | Web Search | `run`, `get`, `refine`, `events`, `cancel` |
 | Do Anything | `run`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
 | Track | `createMonitor`, `getMonitor`, `updateMonitor`, `deleteMonitor`, `runNow`, `events` |
+
+Browser Use, Deep Research, and Site Login scopes are reserved until their product runtime SDK methods are exported.
 
 ### Response Shape
 
@@ -325,7 +382,7 @@ try {
   await eak.webSearch.run({ token, query: "EAK SDK" });
 } catch (error) {
   if (error instanceof EAKPermissionDeniedError) {
-    // Request a new delegateAgentToken with the missing scope.
+    // Request a new delegated token with the missing scope.
   }
 
   if (error instanceof EAKRateLimitError || error instanceof EAKTimeoutError) {
@@ -339,28 +396,11 @@ try {
 ## Security Notes
 
 - Keep EAK AK/SK on trusted servers only.
-- Do not expose `delegateAgentToken` to clients unless the client is explicitly part of the trusted execution boundary.
+- Do not expose delegation tokens to untrusted clients.
 - Request the smallest useful scope set for each Agent action.
-- Prefer `interactive` mode for high-risk scopes.
-- Store `auditId`, `requestId`, and `traceId` with product logs when you need later investigation.
+- Prefer `interactive` mode for browser control, site login, long-running monitors, and sensitive artifacts.
+- Store `auditId`, `requestId`, and `traceId` with product logs when later investigation matters.
 - Rotate AK/SK through EAK Console if a credential might have been exposed.
-
-## Development
-
-This repository is managed with pnpm.
-
-```bash
-pnpm install
-pnpm typecheck
-pnpm test
-pnpm build
-```
-
-Useful package checks:
-
-```bash
-pnpm pack --dry-run
-```
 
 ## License
 

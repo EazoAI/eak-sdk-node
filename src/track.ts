@@ -1,57 +1,73 @@
-import type { EAKEvent, EAKResponse, EAKTransport, JsonObject, TokenInput } from "./types";
+import type { EAKEvent, EAKResponse, EAKTransport, JsonObject, RuntimeTokenInput } from "./types";
 
 export function createTrackNamespace(transport: EAKTransport) {
   return {
-    createMonitor: <T = unknown>(input: TokenInput & JsonObject): Promise<EAKResponse<T>> =>
+    createMonitor: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/track/monitors", input.token, {
         body: omit(input, "token"),
+        requiredScopes: ["webagent.task:run"],
       }),
 
     getMonitor: <T = unknown>(
-      input: TokenInput & { monitorId: string },
+      input: RuntimeTokenInput & { monitorId: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "GET",
         `/track/monitors/${encodeURIComponent(input.monitorId)}`,
         input.token,
+        {
+          requiredScopes: ["webagent.task:read"],
+        },
       ),
 
     runNow: <T = unknown>(
-      input: TokenInput & { monitorId: string },
+      input: RuntimeTokenInput & { monitorId: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "POST",
         `/track/monitors/${encodeURIComponent(input.monitorId)}/run_now`,
         input.token,
-        { body: {} },
+        {
+          body: {},
+          requiredScopes: ["webagent.task:run"],
+        },
       ),
 
     events: <T = unknown>(
-      input: TokenInput & { monitorId: string; lastEventId?: string },
+      input: RuntimeTokenInput & { monitorId: string; lastEventId?: string },
     ): AsyncIterable<EAKEvent<T>> =>
       transport.webAgentSSE(
         `/track/monitors/${encodeURIComponent(input.monitorId)}/events`,
         input.token,
-        { lastEventId: input.lastEventId },
+        {
+          lastEventId: input.lastEventId,
+          requiredScopes: ["webagent.task:read"],
+        },
       ),
 
     updateMonitor: <T = unknown>(
-      input: TokenInput & { monitorId: string } & JsonObject,
+      input: RuntimeTokenInput & { monitorId: string } & JsonObject,
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "PATCH",
         `/track/monitors/${encodeURIComponent(input.monitorId)}`,
         input.token,
-        { body: omit(input, "token", "monitorId") },
+        {
+          body: omit(input, "token", "monitorId"),
+          requiredScopes: ["webagent.task:run"],
+        },
       ),
 
     deleteMonitor: <T = unknown>(
-      input: TokenInput & { monitorId: string },
+      input: RuntimeTokenInput & { monitorId: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "DELETE",
         `/track/monitors/${encodeURIComponent(input.monitorId)}`,
         input.token,
+        {
+          requiredScopes: ["webagent.task:run"],
+        },
       ),
   };
 }

@@ -100,7 +100,10 @@ export function errorFromPayload(
   const detail = isJsonObject(payload) ? payload.detail : undefined;
   const detailObject = isJsonObject(detail) ? detail : undefined;
   const source = detailObject || (isJsonObject(payload) ? payload : {});
-  const code = stringField(source, "code") || statusCodeToCode(status);
+  const code =
+    stringField(source, "code") ||
+    stringField(source, "apiCode") ||
+    statusCodeToCode(status);
   const message =
     stringField(source, "message") ||
     stringField(source, "detail") ||
