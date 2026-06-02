@@ -1,18 +1,14 @@
-image:
-  name: docker.m.daocloud.io/library/node:20
-  entrypoint: [""]
+image: node:20
 
 default:
   tags:
-    - cn
+    - us
 
 stages:
   - verify
   - release
 
 variables:
-  PNPM_HOME: "$CI_PROJECT_DIR/.pnpm"
-  PATH: "$PNPM_HOME:$PATH"
   GITHUB_REPOSITORY: "EazoAI/eazo-eak-sdk-node"
 
 cache:
