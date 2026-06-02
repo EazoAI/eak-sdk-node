@@ -3,7 +3,7 @@ image:
 
 default:
   tags:
-    - us
+    - eak-prod
 
 stages:
   - verify
