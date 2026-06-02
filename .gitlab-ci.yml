@@ -4,7 +4,7 @@ image:
 
 default:
   tags:
-    - eak-us
+    - cn
 
 stages:
   - verify
