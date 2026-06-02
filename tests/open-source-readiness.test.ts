@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -12,6 +12,14 @@ function expectFile(path: string): void {
   expect(statSync(join(root, path)).isFile()).toBe(true);
 }
 
+function expectNoFile(path: string): void {
+  expect(existsSync(join(root, path))).toBe(false);
+}
+
+function readText(path: string): string {
+  return readFileSync(join(root, path), "utf8");
+}
+
 describe("open-source readiness", () => {
   it("keeps maintainer-facing repository files in place", () => {
     [
@@ -21,8 +29,8 @@ describe("open-source readiness", () => {
       "docs/open-source-readiness.md",
       "examples/basic-delegation.ts",
       "tsconfig.examples.json",
-      ".github/workflows/ci.yml",
     ].forEach(expectFile);
+    expectNoFile(".github/workflows/ci.yml");
   });
 
   it("publishes package metadata expected from an open SDK", () => {
@@ -53,5 +61,14 @@ describe("open-source readiness", () => {
       "docs",
       "examples",
     ]);
+  });
+
+  it("keeps external release jobs gated to version tags", () => {
+    const ci = readText(".gitlab-ci.yml");
+
+    expect(ci).toContain("if: '$CI_COMMIT_TAG =~ /^v/'");
+    expect(ci).not.toContain("if: '$CI_COMMIT_BRANCH'");
+    expect(ci).not.toContain('if: \'$CI_COMMIT_BRANCH == "main"\'');
+    expect(ci).not.toContain('git push github "${CI_COMMIT_SHA}:refs/heads/${CI_COMMIT_REF_NAME}"');
   });
 });
