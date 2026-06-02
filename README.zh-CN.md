@@ -1,6 +1,6 @@
 # @eazo/eak
 
-[English README](./README.md)
+[English](./README.md) | 中文
 
 `@eazo/eak` 是面向 Node.js 服务端的统一 EAK SDK，用一条清晰的调用链串起 Agent 委托授权、GUMem 长期记忆、WebAgent 网页行动、Web Search 和 Track 监控能力。
 

@@ -11,7 +11,7 @@ Unified Node.js SDK for EAK Agent delegation, GUMem memory, WebAgent automation,
 
 AK/SK credentials must stay on a trusted server. Do not ship them to browsers, mobile apps, public CLI config, or untrusted Agent runtimes.
 
-Read this in [Chinese](./README.zh-CN.md).
+English | [中文](./README.zh-CN.md)
 
 ## Why EAK
 
