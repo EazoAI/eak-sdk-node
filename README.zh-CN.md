@@ -47,13 +47,13 @@ yarn add @eazo/eak
 安装 EAK Skill：
 
 ```bash
-npx skills add https://github.com/eazo-ai/eak --skill eak
+npx skills add https://github.com/EazoAI/eazo-eak-sdk-node --skill eak
 ```
 
 如果只想安装到 Claude Code，可以指定 Agent：
 
 ```bash
-npx skills add https://github.com/eazo-ai/eak --agent claude-code --skill eak
+npx skills add https://github.com/EazoAI/eazo-eak-sdk-node --agent claude-code --skill eak
 ```
 
 ## 最短调用链

@@ -52,13 +52,13 @@ EAK can also be exposed to AI coding tools through a Skill package, so Codex, Cl
 Install the EAK Skill:
 
 ```bash
-npx skills add https://github.com/eazo-ai/eak --skill eak
+npx skills add https://github.com/EazoAI/eazo-eak-sdk-node --skill eak
 ```
 
 If you only want to install it for Claude Code, specify the Agent:
 
 ```bash
-npx skills add https://github.com/eazo-ai/eak --agent claude-code --skill eak
+npx skills add https://github.com/EazoAI/eazo-eak-sdk-node --agent claude-code --skill eak
 ```
 
 ## Quick Start

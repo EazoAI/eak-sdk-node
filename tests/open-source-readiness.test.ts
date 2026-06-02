@@ -29,13 +29,13 @@ describe("open-source readiness", () => {
     const pkg = readJson("package.json");
     expect(pkg.repository).toEqual({
       type: "git",
-      url: "git+ssh://git@gitlab.authing-inc.co/sak-steamory-agent-kit/eak-sdk-node.git",
+      url: "git+https://github.com/EazoAI/eazo-eak-sdk-node.git",
     });
     expect(pkg.bugs).toEqual({
-      url: "https://gitlab.authing-inc.co/sak-steamory-agent-kit/eak-sdk-node/-/issues",
+      url: "https://github.com/EazoAI/eazo-eak-sdk-node/issues",
     });
     expect(pkg.homepage).toBe(
-      "https://gitlab.authing-inc.co/sak-steamory-agent-kit/eak-sdk-node#readme",
+      "https://github.com/EazoAI/eazo-eak-sdk-node#readme",
     );
     expect(pkg.publishConfig).toEqual({ access: "public" });
     expect(pkg.scripts).toMatchObject({

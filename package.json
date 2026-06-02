@@ -2,13 +2,13 @@
   "name": "@eazo/eak",
   "version": "0.1.0",
   "description": "Unified Node.js SDK for EAK Agent delegation, GUMem memory, and WebAgent automation.",
-  "homepage": "https://gitlab.authing-inc.co/sak-steamory-agent-kit/eak-sdk-node#readme",
+  "homepage": "https://github.com/EazoAI/eazo-eak-sdk-node#readme",
   "bugs": {
-    "url": "https://gitlab.authing-inc.co/sak-steamory-agent-kit/eak-sdk-node/-/issues"
+    "url": "https://github.com/EazoAI/eazo-eak-sdk-node/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@gitlab.authing-inc.co/sak-steamory-agent-kit/eak-sdk-node.git"
+    "url": "git+https://github.com/EazoAI/eazo-eak-sdk-node.git"
   },
   "license": "MIT",
   "type": "module",
