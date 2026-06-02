@@ -1,9 +1,9 @@
 image:
-  name: node:20
+  name: docker.m.daocloud.io/library/node:20
 
 default:
   tags:
-    - eak-prod
+    - eak-us
 
 stages:
   - verify
