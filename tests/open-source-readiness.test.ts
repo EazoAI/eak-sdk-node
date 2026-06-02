@@ -63,12 +63,13 @@ describe("open-source readiness", () => {
     ]);
   });
 
-  it("keeps external release jobs gated to version tags", () => {
+  it("keeps external release jobs available for manual branch and tag releases", () => {
     const ci = readText(".gitlab-ci.yml");
 
+    expect(ci).toContain("if: '$CI_COMMIT_TAG'");
+    expect(ci).toContain("if: '$CI_COMMIT_BRANCH'");
+    expect(ci).toContain('if: \'$CI_COMMIT_BRANCH == "main"\'');
     expect(ci).toContain("if: '$CI_COMMIT_TAG =~ /^v/'");
-    expect(ci).not.toContain("if: '$CI_COMMIT_BRANCH'");
-    expect(ci).not.toContain('if: \'$CI_COMMIT_BRANCH == "main"\'');
-    expect(ci).not.toContain('git push github "${CI_COMMIT_SHA}:refs/heads/${CI_COMMIT_REF_NAME}"');
+    expect(ci).toContain('git push github "${CI_COMMIT_SHA}:refs/heads/${CI_COMMIT_REF_NAME}"');
   });
 });
