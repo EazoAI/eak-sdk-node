@@ -63,15 +63,17 @@ describe("open-source readiness", () => {
     ]);
   });
 
-  it("allows branch GitHub sync but keeps npm publishing tag-only", () => {
+  it("allows manual branch release jobs while keeping branch sync optional", () => {
     const ci = readText(".gitlab-ci.yml");
 
     expect(ci).toContain('GITHUB_REPOSITORY: "EazoAI/eak-sdk-node"');
     expect(ci).toContain("if: '$CI_COMMIT_TAG'");
     expect(ci).toContain("if: '$CI_COMMIT_BRANCH'");
+    expect(ci).toContain('if: \'$CI_COMMIT_BRANCH == "main"\'');
     expect(ci).toContain("if: '$CI_COMMIT_TAG =~ /^v/'");
     expect(ci).toContain('git push github "${CI_COMMIT_SHA}:refs/heads/${CI_COMMIT_REF_NAME}"');
     expect(ci).toMatch(/- if: '\$CI_COMMIT_BRANCH'\n\s+when: manual\n\s+allow_failure: true/);
-    expect(ci).not.toContain('if: \'$CI_COMMIT_BRANCH == "main"\'');
+    expect(ci).toContain("npm whoami");
+    expect(ci).toContain("npm org ls eazo --json");
   });
 });

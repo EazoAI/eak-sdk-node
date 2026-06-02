@@ -64,6 +64,8 @@ publish_npm:
   needs:
     - verify
   rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
     - if: '$CI_COMMIT_TAG =~ /^v/'
       when: manual
     - when: never
@@ -74,8 +76,11 @@ publish_npm:
     - pnpm install --frozen-lockfile
   script:
     - test -n "$NPM_TOKEN"
-    - pnpm build
     - printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > .npmrc
-    - npm publish --access public
+    - npm whoami
+    - npm org ls eazo --json
+    - npm access list packages @eazo --json
+    - pnpm build
+    - npm publish --access public --registry https://registry.npmjs.org/
   after_script:
     - rm -f .npmrc
