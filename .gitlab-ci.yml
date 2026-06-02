@@ -9,7 +9,7 @@ stages:
   - release
 
 variables:
-  GITHUB_REPOSITORY: "EazoAI/eazo-eak-sdk-node"
+  GITHUB_REPOSITORY: "EazoAI/eak-sdk-node"
 
 cache:
   key:
@@ -41,6 +41,7 @@ sync_github:
       when: manual
     - if: '$CI_COMMIT_BRANCH'
       when: manual
+      allow_failure: true
     - when: never
   before_script:
     - git --version
