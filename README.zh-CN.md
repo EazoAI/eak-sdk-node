@@ -2,11 +2,11 @@
 
 [English](./README.md) | 中文
 
-`@eazo/eak` 是面向 Node.js 服务端的统一 EAK SDK，用一条清晰的调用链串起 Agent 委托授权、GUMem 长期记忆、WebAgent 网页行动、Web Search 和 Track 监控能力。
+`@eazo/eak` 是面向 Node.js 服务端的统一 EAK SDK，用一条清晰的调用链串起 Agent 委托授权、GenAuth 用户管理、GUMem 长期记忆、WebAgent 网页行动、Web Search 和 Track 监控能力。
 
 当一个 Agent 真正开始帮用户做事时，它不能只拿一把后台密钥到处调用接口。它需要知道用户是谁、用户允许它做什么、这次授权什么时候过期、页面里发生了什么、最后每一步能不能被追溯。
 
-`@eazo/eak` 解决的就是这件事：应用服务端先确认 GenAuth 用户，再通过 `delegateToken` 申请短期委托 token，之后每次 GUMem/WebAgent/Web Search/Track 调用都把这个 token 传入 `token` 字段。SDK 会在内部完成运行时发现和产品 token exchange。
+`@eazo/eak` 解决的是两类服务端调用：运行时产品调用时，应用服务端先确认 GenAuth 用户，再通过 `delegateToken` 申请短期委托 token，之后每次 GUMem/WebAgent/Web Search/Track 调用都把这个 token 传入 `token` 字段；GenAuth 用户管理调用时，SDK 会用 EAK AK/SK 换取标准 GenAuth management token，再调用 GenAuth v3 users API。
 
 AK/SK 必须只保存在可信服务端，不能下发到浏览器、移动端、公开 CLI 配置或其他不可信运行环境。
 
@@ -17,6 +17,7 @@ EAK 把 Agent 授权模型收敛成几个稳定边界：
 - 一个 SDK 入口：`new EzaoAgentKit({ accessKey, secretKey })`。
 - 一个发现地址：`host` 指向 EAK Console/SDK 网关，默认值是 `https://eak.eazo.ai/dashboard`，SDK 通过 `/api/v3/eak/runtime-config` 获取 GenAuth、GUMem、WebAgent 等运行时地址。
 - 一个授权步骤：调用 `delegateToken`，再把 `data.token` 传给产品能力方法。
+- 一条管理面路径：调用 `genauth.users.*`，SDK 会先用 AK/SK 换取 GenAuth management token，再调用 GenAuth v3 users API。
 - 一组能力命名空间：`eak`、`genauth`、`gumem`、`webSearch`、`doAnything`、`track`。
 - 一组可读的 scope 字符串：让最小授权边界直接出现在业务代码里。
 - 一致的错误和审计字段：`requestId`、`traceId`、`auditId`、`retryable`。
@@ -36,6 +37,8 @@ yarn add @eazo/eak
 - Node.js 18 或更高版本。
 - 服务端运行环境提供 `fetch`。
 - 在 EAK Console 创建的 `accessKey` 与 `secretKey`，线上控制台地址是 `https://eak.eazo.ai/dashboard`。
+- 运行时产品调用需要一个来自该 EAK credential 绑定 GenAuth userpool 的真实用户 ID。Smoke 测试可以通过 `EAK_USER_ID` 传入；业务代码中应通过 `currentUser` 或服务端已有登录态解析。
+- `genauth.users.*` 管理面调用不需要 `EAK_USER_ID`。SDK 会用 AK/SK 向 EAK 换取 GenAuth management token。
 - 可选的 `host`，用于私有化或本地部署；默认值是 `https://eak.eazo.ai/dashboard`。
 
 正常初始化 SDK 时不需要传 `tenantId`。EAK AK/SK 已经在服务端绑定了租户和应用边界。
@@ -47,36 +50,80 @@ yarn add @eazo/eak
 安装 EAK Skill：
 
 ```bash
-npx skills add https://github.com/EazoAI/eak-sdk-node --skill eak
+npx skills add https://github.com/EazoAI/eak-sdk-node --skill eak-sdk
 ```
 
 如果只想安装到 Claude Code，可以指定 Agent：
 
 ```bash
-npx skills add https://github.com/EazoAI/eak-sdk-node --agent claude-code --skill eak
+npx skills add https://github.com/EazoAI/eak-sdk-node --agent claude-code --skill eak-sdk
 ```
+
+npm 包中包含 `skills/` 目录，但推荐仍使用上面的 GitHub 仓库安装命令，这样 AI 工具可以读取仓库内的 Skill 元数据。
 
 ## 最短调用链
 
+先在可信服务端初始化 SDK。AK/SK 只留在服务端，管理面调用和运行时产品委托都复用这一个 SDK 实例。
+
 ```ts
-import { EzaoAgentKit, EAKEventTypes } from "@eazo/eak";
+import { EzaoAgentKit, EAKEventTypes, EAKScopeBundles, EAKScopes } from "@eazo/eak";
 
 const eak = new EzaoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
   secretKey: process.env.EAK_SECRET_KEY!,
 });
+```
+
+### GenAuth 用户管理
+
+`genauth.users.*` 属于管理面能力，不需要 `EAK_USER_ID` 或 `delegateToken`。SDK 会在内部签名请求 `POST /api/v3/eak/genauth/admin-token`，请求体是 `{}`，拿到 GenAuth management token 和 `userPoolId` 后再调用 GenAuth v3 users API。
+
+```ts
+const users = await eak.genauth.users.list({
+  page: 1,
+  limit: 20,
+});
+
+console.log("GenAuth users:", users.data);
+
+const created = await eak.genauth.users.create<{ userId: string }>({
+  username: `sdk-demo-${Date.now()}`,
+  password: process.env.GENAUTH_DEMO_USER_PASSWORD!,
+});
+
+const profile = await eak.genauth.users.get<{ userId: string }>({
+  userId: created.data.userId,
+});
+
+await eak.genauth.users.update({
+  userId: profile.data.userId,
+  nickname: "SDK demo user",
+});
+
+// Smoke 测试结束后可以清理测试用户：
+// await eak.genauth.users.deleteBatch({ userIds: [profile.data.userId] });
+```
+
+### 运行时产品委托
+
+GUMem、WebAgent、Web Search、Do Anything、Track 是代表终端用户执行的运行时产品能力。这类调用需要一个来自 EAK credential 绑定 userpool 的真实 GenAuth 用户 ID，再使用 `delegateToken` 返回的 token。
+
+```ts
+const userId = process.env.EAK_USER_ID!;
+if (!userId) {
+  throw new Error("EAK_USER_ID 必须是 credential 绑定 userpool 下的真实 GenAuth 用户 ID");
+}
 
 const delegation = await eak.delegateToken({
-  userId: "user_1",
+  userId,
   agent: "sales-assistant",
   scopes: [
-    "gumem.memory:read",
-    "gumem.message:write",
-    "webagent.web_search:run",
-    "webagent.web_search:read",
-    "webagent.do_anything:session",
-    "webagent.do_anything:run",
-    "webagent.do_anything:events",
+    ...EAKScopeBundles.GUMEM_SESSION_RECALL,
+    EAKScopes.WEBAGENT_WEB_SEARCH_RUN,
+    EAKScopes.WEBAGENT_WEB_SEARCH_READ,
+    EAKScopes.WEBAGENT_DO_ANYTHING_SESSION,
+    EAKScopes.WEBAGENT_DO_ANYTHING_RUN,
+    EAKScopes.WEBAGENT_DO_ANYTHING_EVENTS,
   ],
   mode: "silent",
 });
@@ -156,7 +203,7 @@ GET /api/v3/eak/runtime-config
 
 ```ts
 const delegation = await eak.delegateToken({
-  userId: "user_1",
+  userId,
   agent: "research-assistant",
   scopes: ["gumem.memory:read"],
   mode: "silent",
@@ -177,6 +224,7 @@ await eak.gumem.recall({
 | 场景 | 推荐 scope | 用户能理解的描述 |
 | --- | --- | --- |
 | 读取用户记忆 | `gumem.memory:read` | Agent 可以读取与你相关的历史偏好。 |
+| 创建 GUMem 会话并召回上下文 | `gumem.memory:read`, `gumem.memory:write`, `gumem.message:write` | Agent 可以为当前用户创建记忆会话、写入消息并召回上下文。 |
 | 写入任务结果 | `gumem.message:write`, `gumem.action:write` | Agent 可以把本次确认过的结果写回 GUMem。 |
 | 搜索公开网页 | `webagent.web_search:run`, `webagent.web_search:read` | Agent 可以搜索公开网页并读取结果。 |
 | 执行网页任务 | `webagent.do_anything:session`, `webagent.do_anything:run`, `webagent.do_anything:events` | Agent 可以执行一次有边界的网页任务，并展示执行过程。 |
@@ -186,6 +234,12 @@ await eak.gumem.recall({
 
 高风险能力建议显式授权，例如接管浏览器、请求或确认外部站点登录、创建长期监控、提交表单、读取浏览器画面/录屏/附件/研究产物等敏感内容。
 
+SDK 也导出了常见 GUMem 会话、写入、召回场景的 scope bundle：
+
+```ts
+EAKScopeBundles.GUMEM_SESSION_RECALL
+```
+
 ## 能力示例
 
 ### GUMem
@@ -193,7 +247,7 @@ await eak.gumem.recall({
 ```ts
 await eak.gumem.createSession({
   token,
-  userId: "user_1",
+  userId,
   sessionId: "account-research",
   title: "客户调研",
 });
@@ -294,9 +348,19 @@ const credential = await eak.eak.credentials.create({
     "webagent.do_anything:events",
   ],
 });
+
+const users = await eak.genauth.users.list({
+  page: 1,
+  limit: 20,
+});
+
+const created = await eak.genauth.users.create({
+  username: "sdk-demo-user",
+  password: process.env.GENAUTH_DEMO_USER_PASSWORD!,
+});
 ```
 
-GenAuth 与 EAK 管理面调用使用 GenAuth access token。GUMem/WebAgent/Track 等运行时能力使用 `delegateToken` 返回的 token。
+`currentUser`、`genauth.userInfo`、EAK workspace/credential API 使用 GenAuth access token，因为它们代表已登录管理员操作。`genauth.users.*` 也属于管理面能力，但它使用 EAK AK/SK：SDK 会签名请求 `POST /api/v3/eak/genauth/admin-token`，请求体是空 JSON `{}`，拿到标准 GenAuth management token 和 `userPoolId`，再携带 `Authorization: Bearer ...` 与 `x-authing-userpool-id` 调用 GenAuth v3 用户管理 API。这里不传 `resource`、`actions`、`expiresIn` 或 `EAK_USER_ID`。GUMem/WebAgent/Track 等运行时能力才使用 `delegateToken` 返回的 token。
 
 ## API 概览
 
@@ -330,7 +394,7 @@ import { EAK, EazoAgentKit, EzaoAgentKit } from "@eazo/eak";
 | --- | --- |
 | 委托授权 | `delegateToken`；兼容别名：`delegateAgent`, `completeDelegateAgent` |
 | EAK | `workspaces.list`, `workspaces.get`, `workspaces.create`, `workspaces.update`, `credentials.list`, `credentials.create`, `credentials.rotate`, `credentials.update` |
-| GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken` |
+| GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken`, `users.list`, `users.get`, `users.getBatch`, `users.create`, `users.createBatch`, `users.update`, `users.deleteBatch` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
 | Web Search | `run`, `get`, `refine`, `events`, `cancel` |
 | Do Anything | `run`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
@@ -389,6 +453,17 @@ try {
   throw error;
 }
 ```
+
+常见首次接入错误：
+
+| 错误 | 含义 | 下一步 |
+| --- | --- | --- |
+| `agent must be a string` | 当前线上 delegation API 期望 `agent` 是字符串 ID。 | 使用 `agent: "memory-agent"`，不要传对象。 |
+| `eak.delegation.user_not_bound` | `userId` 不属于该 EAK credential 绑定的 GenAuth userpool。 | 使用 `currentUser` 返回的真实用户 ID，或确认用户来自同一个绑定 userpool。 |
+| `eak.genauth.userpool_binding_missing` | AK/SK 没有绑定 GenAuth userpool，`genauth.users.*` 无法换取 management token。 | 先把 EAK credential 绑定到目标 GenAuth userpool。 |
+| `eak.genauth.userpool_owner_missing` | 绑定的 GenAuth userpool 找不到可用于签发 management token 的 owner 用户。 | 修复 GenAuth userpool owner 数据或绑定。 |
+| `delegation.required` | GUMem/WebAgent 调用没有传 `token`。 | 把 `delegation.data.token` 传给产品能力方法。 |
+| `direct delegation token deprecated` | 应用直接把 EAK delegation token 打到了产品服务。 | 通过 SDK 调产品能力，让 SDK 在内部完成 token exchange。 |
 
 ## 安全建议
 

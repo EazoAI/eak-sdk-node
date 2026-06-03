@@ -35,6 +35,7 @@ export class EzaoAgentKit {
   private readonly host: string;
   private runtimeConfigPromise?: Promise<ResolvedRuntimeConfig>;
   private readonly productTokenCache = new Map<string, { token: string; expiresAt: number }>();
+  private genAuthAdminTokenCache?: { accessToken: string; userPoolId: string; expiresAt: number };
 
   readonly gumem: ReturnType<typeof createGumemNamespace>;
   readonly genauth: ReturnType<typeof createGenAuthNamespace>;
@@ -63,7 +64,9 @@ export class EzaoAgentKit {
       webAgentJson: (...args) => this.webAgentJson(...args),
       webAgentSSE: (...args) => this.webAgentSSE(...args),
     };
-    this.genauth = createGenAuthNamespace(transport);
+    this.genauth = createGenAuthNamespace(transport, {
+      adminTokenFor: () => this.genauthAdminTokenFor(),
+    });
     this.eak = createEakNamespace(
       transport,
       (input) => this.delegateToken(input),
@@ -458,6 +461,35 @@ export class EzaoAgentKit {
     });
     return accessToken;
   }
+
+  private async genauthAdminTokenFor(): Promise<{ accessToken: string; userPoolId: string }> {
+    const cached = this.genAuthAdminTokenCache;
+    if (cached && cached.expiresAt > Date.now() + 30_000) {
+      return { accessToken: cached.accessToken, userPoolId: cached.userPoolId };
+    }
+
+    const response = await this.signedPost<unknown>("/api/v3/eak/genauth/admin-token", {});
+    const payload = response.data;
+    const accessToken = readAccessToken(payload);
+    const userPoolId =
+      readString(payload, "userPoolId") ??
+      readString(payload, "userpoolId") ??
+      readString(payload, "user_pool_id");
+    if (!accessToken || !userPoolId) {
+      throw errorFromPayload(
+        502,
+        payload,
+        "EAK GenAuth admin-token response did not include accessToken and userPoolId",
+      );
+    }
+
+    this.genAuthAdminTokenCache = {
+      accessToken,
+      userPoolId,
+      expiresAt: Date.now() + Math.max(0, readExpiresIn(payload) ?? 3600) * 1000,
+    };
+    return { accessToken, userPoolId };
+  }
 }
 
 export { EzaoAgentKit as EAK, EzaoAgentKit as EazoAgentKit };
@@ -670,6 +702,12 @@ function readExpiresIn(payload: unknown): number | undefined {
     return Number.isFinite(parsed) ? parsed : undefined;
   }
   return undefined;
+}
+
+function readString(payload: unknown, key: string): string | undefined {
+  if (!isJsonObject(payload)) return undefined;
+  const value = payload[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function requiredWebAgentTenantId(token: string): string {

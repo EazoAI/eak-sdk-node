@@ -24,7 +24,16 @@ export type {
 } from "./eak";
 export type {
   GenAuthAccessTokenInput,
+  GenAuthAdminToken,
+  GenAuthAdminTokenOverrideInput,
   GenAuthDelegationIntrospectionInput,
+  GenAuthUserCreateBatchInput,
+  GenAuthUserCreateInput,
+  GenAuthUserDeleteBatchInput,
+  GenAuthUserGetBatchInput,
+  GenAuthUserGetInput,
+  GenAuthUserListInput,
+  GenAuthUserUpdateInput,
 } from "./genauth";
 export type {
   CompleteDelegateAgentInput,

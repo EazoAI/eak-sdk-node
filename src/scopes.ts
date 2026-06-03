@@ -50,12 +50,18 @@ export const EAKScopes = {
   WEBAGENT_SITE_LOGIN_REQUEST: "webagent.site_login:request",
   WEBAGENT_SITE_LOGIN_CONFIRM: "webagent.site_login:confirm",
   WEBAGENT_SITE_LOGIN_REVOKE: "webagent.site_login:revoke",
+
 } as const;
 
 export type EAKScope = (typeof EAKScopes)[keyof typeof EAKScopes];
 
 export const EAKScopeBundles = {
   GUMEM_READONLY: [EAKScopes.GUMEM_MEMORY_READ, EAKScopes.GUMEM_PROFILE_READ],
+  GUMEM_SESSION_RECALL: [
+    EAKScopes.GUMEM_MEMORY_READ,
+    EAKScopes.GUMEM_MEMORY_WRITE,
+    EAKScopes.GUMEM_MESSAGE_WRITE,
+  ],
   GUMEM_WRITE: [
     EAKScopes.GUMEM_SESSION_CREATE,
     EAKScopes.GUMEM_MESSAGE_WRITE,

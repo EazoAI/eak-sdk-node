@@ -28,11 +28,7 @@ const delegation = await eak.delegateToken({
     name: userProfile.name,
     email: userProfile.email,
   },
-  agent: {
-    id: "support-assistant",
-    name: "Support Assistant",
-    description: "Answers a user question with memory and web automation context.",
-  },
+  agent: "support-assistant",
   scopes: [
     EAKScopes.GUMEM_MEMORY_READ,
     EAKScopes.WEBAGENT_DO_ANYTHING_SESSION,

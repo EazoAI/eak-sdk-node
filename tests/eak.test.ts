@@ -306,6 +306,131 @@ describe("EzaoAgentKit", () => {
     });
   });
 
+  it("exchanges AK/SK for a GenAuth admin token before listing users", async () => {
+    const calls: Array<{ url: string; init?: RequestInit; body?: unknown }> = [];
+    const client = new EzaoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      genauthBaseUrl: "https://tenant-a.genauth.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        calls.push({ url: String(url), init, body });
+        if (String(url) === "https://eak.example.com/api/v3/eak/genauth/admin-token") {
+          return jsonResponse({
+            data: {
+              accessToken: "genauth-admin-token",
+              tokenType: "Bearer",
+              userPoolId: "up_1",
+            },
+          });
+        }
+        return jsonResponse({ data: { list: [{ userId: "user_1" }], totalCount: 1 } });
+      }) as typeof fetch,
+    });
+
+    const result = await client.genauth.users.list({ page: 1, limit: 20 });
+
+    expect(result.data).toMatchObject({ totalCount: 1 });
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://eak.example.com/api/v3/eak/genauth/admin-token",
+      "https://tenant-a.genauth.example.com/api/v3/list-users",
+    ]);
+    expect(calls[0].body).toEqual({});
+    expect((calls[0].init?.headers as Record<string, string>).authorization).toMatch(
+      /^authing ak_test:/,
+    );
+    expect(calls[1].init?.method).toBe("POST");
+    expect((calls[1].init?.headers as Record<string, string>).authorization).toBe(
+      "Bearer genauth-admin-token",
+    );
+    expect((calls[1].init?.headers as Record<string, string>)["x-authing-userpool-id"]).toBe(
+      "up_1",
+    );
+    expect(calls[1].body).toEqual({ options: { pagination: { page: 1, limit: 20 } } });
+  });
+
+  it("maps GenAuth user CRUD helpers to v3 management endpoints", async () => {
+    const calls: Array<{ url: string; init?: RequestInit; body?: unknown }> = [];
+    const client = new EzaoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      genauthBaseUrl: "https://tenant-a.genauth.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        calls.push({ url: String(url), init, body });
+        if (String(url) === "https://eak.example.com/api/v3/eak/genauth/admin-token") {
+          return jsonResponse({
+            data: {
+              accessToken: "genauth-admin-token",
+              userPoolId: "up_1",
+            },
+          });
+        }
+        return jsonResponse({ data: { ok: true } });
+      }) as typeof fetch,
+    });
+
+    await client.genauth.users.get({ userId: "user_1" });
+    await client.genauth.users.create({ username: "alice", password: "P@ssw0rd!" });
+    await client.genauth.users.createBatch({
+      users: [{ username: "bob", password: "P@ssw0rd!" }],
+    });
+    await client.genauth.users.update({ userId: "user_1", nickname: "Alice" });
+    await client.genauth.users.deleteBatch({ userIds: ["user_1"] });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://eak.example.com/api/v3/eak/genauth/admin-token",
+      "https://tenant-a.genauth.example.com/api/v3/get-user?userId=user_1",
+      "https://tenant-a.genauth.example.com/api/v3/create-user",
+      "https://tenant-a.genauth.example.com/api/v3/create-users-batch",
+      "https://tenant-a.genauth.example.com/api/v3/update-user",
+      "https://tenant-a.genauth.example.com/api/v3/delete-users-batch",
+    ]);
+    expect(calls[0].body).toEqual({});
+    expect(calls[2].body).toEqual({ username: "alice", password: "P@ssw0rd!" });
+    expect(calls[3].body).toEqual({
+      list: [{ username: "bob", password: "P@ssw0rd!" }],
+    });
+    expect(calls[4].body).toEqual({ userId: "user_1", nickname: "Alice" });
+    expect(calls[5].body).toEqual({ userIds: ["user_1"] });
+  });
+
+  it("caches one GenAuth management token for all user management helpers", async () => {
+    const calls: string[] = [];
+    const client = new EzaoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      genauthBaseUrl: "https://tenant-a.genauth.example.com",
+      fetch: (async (url: URL | RequestInfo) => {
+        calls.push(String(url));
+        if (String(url) === "https://eak.example.com/api/v3/eak/genauth/admin-token") {
+          return jsonResponse({
+            data: {
+              token: "cached-genauth-admin-token",
+              userPoolId: "up_1",
+            },
+          });
+        }
+        return jsonResponse({ data: { ok: true } });
+      }) as typeof fetch,
+    });
+
+    await client.genauth.users.list();
+    await client.genauth.users.list({ page: 2 });
+
+    expect(calls).toEqual([
+      "https://eak.example.com/api/v3/eak/genauth/admin-token",
+      "https://tenant-a.genauth.example.com/api/v3/list-users",
+      "https://tenant-a.genauth.example.com/api/v3/list-users",
+    ]);
+  });
+
   it("exposes EAK workspace and AK/SK management helpers without sending agent allowlists", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const client = new EzaoAgentKit({
@@ -580,7 +705,14 @@ describe("EzaoAgentKit", () => {
 
   it("exports stable scope and event constants", () => {
     expect(EAKScopes.GUMEM_MEMORY_READ).toBe("gumem.memory:read");
+    expect("GENAUTH_USER_LIST" in EAKScopes).toBe(false);
     expect(EAKScopes.WEBAGENT_DO_ANYTHING_EVENTS).toBe("webagent.do_anything:events");
+    expect(EAKScopeBundles.GUMEM_SESSION_RECALL).toEqual([
+      EAKScopes.GUMEM_MEMORY_READ,
+      EAKScopes.GUMEM_MEMORY_WRITE,
+      EAKScopes.GUMEM_MESSAGE_WRITE,
+    ]);
+    expect("GENAUTH_USER_ADMIN" in EAKScopeBundles).toBe(false);
     expect(EAKScopeBundles.AGENT_DO_ANYTHING_BASIC).toContain(EAKScopes.WEBAGENT_DO_ANYTHING_RUN);
     expect(EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME).toBe("browser_video_frame");
   });

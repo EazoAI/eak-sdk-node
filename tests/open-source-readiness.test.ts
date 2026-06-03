@@ -60,7 +60,40 @@ describe("open-source readiness", () => {
       "LICENSE",
       "docs",
       "examples",
+      "skills",
     ]);
+  });
+
+  it("keeps the published skill instructions aligned with the real skill name and agent shape", () => {
+    const readme = readText("README.md");
+    const zhReadme = readText("README.zh-CN.md");
+    const skill = readText("skills/eak-sdk/SKILL.md");
+    const example = readText("examples/basic-delegation.ts");
+
+    expect(readme).toContain("--skill eak-sdk");
+    expect(readme).not.toContain("--skill eak\n");
+    expect(zhReadme).toContain("--skill eak-sdk");
+    expect(zhReadme).not.toContain("--skill eak\n");
+
+    [readme, zhReadme, skill, example].forEach((text) => {
+      expect(text).not.toMatch(/agent:\s*\{\s*id:/);
+    });
+
+    expect(readme).toContain("agent must be a string");
+    expect(readme).toContain("eak.delegation.user_not_bound");
+    expect(readme).toContain("EAK_USER_ID");
+    expect(readme).not.toContain('userId: "user_1"');
+    expect(readme).toContain("genauth.users.list");
+    expect(readme).toContain("/api/v3/eak/genauth/admin-token");
+    expect(zhReadme).toContain("agent must be a string");
+    expect(zhReadme).toContain("eak.delegation.user_not_bound");
+    expect(zhReadme).toContain("EAK_USER_ID");
+    expect(zhReadme).not.toContain('userId: "user_1"');
+    expect(zhReadme).toContain("genauth.users.list");
+    expect(zhReadme).toContain("/api/v3/eak/genauth/admin-token");
+    expect(skill).toContain("EAK_USER_ID");
+    expect(skill).toContain("genauth.users.*");
+    expect(skill).toContain("/api/v3/eak/genauth/admin-token");
   });
 
   it("allows manual branch release jobs while keeping branch sync optional", () => {
