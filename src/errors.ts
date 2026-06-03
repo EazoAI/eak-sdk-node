@@ -104,10 +104,11 @@ export function errorFromPayload(
     stringField(source, "code") ||
     stringField(source, "apiCode") ||
     statusCodeToCode(status);
-  const message =
+  const rawMessage =
     stringField(source, "message") ||
     stringField(source, "detail") ||
     fallbackMessage;
+  const message = appendUpstreamDescription(rawMessage, source);
   const options: EAKErrorOptions = {
     code,
     status,
@@ -138,6 +139,17 @@ function stringField(value: unknown, key: string): string | undefined {
   if (!isJsonObject(value)) return undefined;
   const field = (value as JsonObject)[key];
   return typeof field === "string" && field ? field : undefined;
+}
+
+function appendUpstreamDescription(message: string, source: unknown): string {
+  const details = isJsonObject(source) ? source.details : undefined;
+  const upstream = isJsonObject(details) ? details.upstream : undefined;
+  const description =
+    stringField(upstream, "error_description") ||
+    stringField(upstream, "message") ||
+    stringField(upstream, "error");
+  if (!description || message.includes(description)) return message;
+  return `${message}: ${description}`;
 }
 
 function statusCodeToCode(status: number): string {

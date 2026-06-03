@@ -582,6 +582,46 @@ describe("EzaoAgentKit", () => {
     );
   });
 
+  it("surfaces upstream token exchange configuration errors in the thrown message", async () => {
+    const delegationToken = jwt({
+      token_type: "eak_delegation_token",
+      aud: "genauth:token-exchange",
+      eak_tenant_id: "eak_tnt_1",
+    });
+    const client = new EzaoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      gumemBaseUrl: "https://gumem.example.com/api",
+      fetch: (async () =>
+        jsonResponse({
+          statusCode: 400,
+          code: "eak.token_exchange.upstream_failed",
+          message: "OIDC token exchange failed",
+          requestId: "req_token_exchange",
+          details: {
+            reason: "upstream_failed",
+            upstreamStatus: 400,
+            upstream: {
+              error: "unauthorized_client",
+              error_description: "grant_type is not enabled",
+            },
+          },
+        })) as typeof fetch,
+    });
+
+    await expect(
+      client.gumem.recall({ token: delegationToken, sessionId: "default", query: "memory" }),
+    ).rejects.toMatchObject({
+      name: "EAKValidationError",
+      code: "eak.token_exchange.upstream_failed",
+      status: 400,
+      requestId: "req_token_exchange",
+      message: expect.stringContaining("grant_type is not enabled"),
+    });
+  });
+
   it("sends product access tokens directly to Gumem", async () => {
     const token = jwt({ aud: "gumem" });
     const calls: Array<{ url: string; init?: RequestInit }> = [];

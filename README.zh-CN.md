@@ -462,6 +462,7 @@ try {
 | `eak.delegation.user_not_bound` | `userId` 不属于该 EAK credential 绑定的 GenAuth userpool。 | 使用 `currentUser` 返回的真实用户 ID，或确认用户来自同一个绑定 userpool。 |
 | `eak.genauth.userpool_binding_missing` | AK/SK 没有绑定 GenAuth userpool，`genauth.users.*` 无法换取 management token。 | 先把 EAK credential 绑定到目标 GenAuth userpool。 |
 | `eak.genauth.userpool_owner_missing` | 绑定的 GenAuth userpool 找不到可用于签发 management token 的 owner 用户。 | 修复 GenAuth userpool owner 数据或绑定。 |
+| `eak.token_exchange.upstream_failed` 且包含 `unauthorized_client` 或 `grant_type is not enabled` | Delegation 已成功，但绑定的 GenAuth 应用没有开启 GUMem/WebAgent 产品 token 所需的 OIDC token-exchange grant。 | 到 GenAuth Console 的 Application Configuration -> Other Configuration -> Authorization Mode 开启 token-exchange grant，然后重跑 GUMem/WebAgent smoke。 |
 | `delegation.required` | GUMem/WebAgent 调用没有传 `token`。 | 把 `delegation.data.token` 传给产品能力方法。 |
 | `direct delegation token deprecated` | 应用直接把 EAK delegation token 打到了产品服务。 | 通过 SDK 调产品能力，让 SDK 在内部完成 token exchange。 |
 

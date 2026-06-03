@@ -465,6 +465,7 @@ Common first-run errors:
 | `eak.delegation.user_not_bound` | The `userId` is not in the GenAuth userpool bound to this EAK credential. | Use a real user id from `currentUser` or from the same bound userpool. |
 | `eak.genauth.userpool_binding_missing` | The AK/SK is not bound to a GenAuth userpool, so `genauth.users.*` cannot obtain a management token. | Bind the EAK credential to the target GenAuth userpool before calling user management APIs. |
 | `eak.genauth.userpool_owner_missing` | The bound GenAuth userpool has no resolvable owner user for management-token signing. | Fix the GenAuth userpool owner data or binding. |
+| `eak.token_exchange.upstream_failed` with `unauthorized_client` or `grant_type is not enabled` | Delegation succeeded, but the bound GenAuth application has not enabled the OIDC token-exchange grant required for GUMem/WebAgent product tokens. | Enable the token-exchange grant in GenAuth Console under Application Configuration -> Other Configuration -> Authorization Mode, then rerun the GUMem/WebAgent smoke. |
 | `delegation.required` | A GUMem/WebAgent call was made without `token`. | Pass `delegation.data.token` to the product namespace call. |
 | `direct delegation token deprecated` | Application code is calling a product service directly with an EAK delegation token. | Call the product through the SDK so token exchange is handled internally. |
 

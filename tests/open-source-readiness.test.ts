@@ -81,17 +81,23 @@ describe("open-source readiness", () => {
 
     expect(readme).toContain("agent must be a string");
     expect(readme).toContain("eak.delegation.user_not_bound");
+    expect(readme).toContain("eak.token_exchange.upstream_failed");
+    expect(readme).toContain("grant_type is not enabled");
     expect(readme).toContain("EAK_USER_ID");
     expect(readme).not.toContain('userId: "user_1"');
     expect(readme).toContain("genauth.users.list");
     expect(readme).toContain("/api/v3/eak/genauth/admin-token");
     expect(zhReadme).toContain("agent must be a string");
     expect(zhReadme).toContain("eak.delegation.user_not_bound");
+    expect(zhReadme).toContain("eak.token_exchange.upstream_failed");
+    expect(zhReadme).toContain("grant_type is not enabled");
     expect(zhReadme).toContain("EAK_USER_ID");
     expect(zhReadme).not.toContain('userId: "user_1"');
     expect(zhReadme).toContain("genauth.users.list");
     expect(zhReadme).toContain("/api/v3/eak/genauth/admin-token");
     expect(skill).toContain("EAK_USER_ID");
+    expect(skill).toContain("eak.token_exchange.upstream_failed");
+    expect(skill).toContain("grant_type is not enabled");
     expect(skill).toContain("genauth.users.*");
     expect(skill).toContain("/api/v3/eak/genauth/admin-token");
   });
