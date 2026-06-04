@@ -20,10 +20,10 @@ Agents that perform real work need more than a backend API key. They need a user
 EAK keeps that model small:
 
 - One SDK entry: `new EzaoAgentKit({ accessKey, secretKey })`.
-- One discovery host: `host` points to the EAK Console/SDK gateway, defaults to `https://eak.eazo.ai/dashboard`, and the SDK reads downstream runtime URLs from `/api/v3/eak/runtime-config`.
+- One discovery path: `host` can override the EAK Console/SDK gateway for private or local deployments, and the SDK reads downstream runtime URLs from `/api/v3/eak/runtime-config`.
 - One delegation entry: call `delegateToken`; silent mode returns `data.token`, while interactive mode returns an authorization URL and later completes on your server.
 - One management path: call `genauth.users.*`, and the SDK exchanges AK/SK for a GenAuth management token before calling GenAuth v3 users APIs.
-- Capability-first namespaces: `eak`, `genauth`, `gumem`, `webSearch`, `doAnything`, and `track`.
+- Capability-first namespaces: `genauth`, `gumem`, `webSearch`, `doAnything`, and `track`.
 - Readable scope strings for least-privilege authorization.
 - Typed errors with `requestId`, `traceId`, `auditId`, and `retryable`.
 
@@ -41,10 +41,10 @@ Requirements:
 
 - Node.js 18 or later.
 - A server-side runtime with `fetch`.
-- EAK `accessKey` and `secretKey` created in EAK Console at `https://eak.eazo.ai/dashboard`.
+- EAK `accessKey` and `secretKey` created in EAK Console.
 - For silent runtime product calls, a real GenAuth user id from the userpool bound to the EAK credential. For smoke tests, pass it as `EAK_USER_ID`; in application code, resolve it with `currentUser` or your existing server-side user session. Interactive delegation can start without `user` or `userId` because the EAK Console/BFF resolves the GenAuth login during authorization.
 - For `genauth.users.*` management calls, `EAK_USER_ID` is not required. The SDK uses AK/SK to request a GenAuth management token from EAK.
-- Optional `host` for private or local EAK deployments. It defaults to `https://eak.eazo.ai/dashboard`.
+- Optional `host` for private or local EAK deployments. Leave it unset for hosted EAK.
 
 You do not pass `tenantId` during normal SDK initialization. The AK/SK is already bound to the tenant and application boundary in EAK.
 
@@ -175,11 +175,7 @@ for await (const event of eak.doAnything.events({
 
 ### Runtime Discovery
 
-`host` points to the EAK Console/SDK gateway, not directly to GenAuth, GUMem, or WebAgent. If you do not pass `host`, the SDK uses the online EAK Console gateway by default:
-
-```text
-https://eak.eazo.ai/dashboard
-```
+`host` points to the EAK Console/SDK gateway, not directly to GenAuth, GUMem, or WebAgent. Hosted integrations normally leave `host` unset; private and local deployments can pass their own gateway.
 
 The SDK signs a request to:
 
@@ -282,43 +278,38 @@ EAKScopeBundles.GUMEM_SESSION_RECALL
 await eak.gumem.createSession({
   token,
   userId,
-  sessionId: "acme-renewal",
-  title: "Acme renewal research",
+  sessionId: "daily-assistant",
+  title: "Daily assistant memory",
 });
+
+// Your application has already collected and confirmed this preference with the user.
+const confirmedPreference =
+  "Please keep daily planning suggestions concise and include only the next action.";
 
 await eak.gumem.addMessages({
   token,
-  sessionId: "acme-renewal",
+  sessionId: "daily-assistant",
   messages: [
     {
+      role: "user",
+      content: confirmedPreference,
+    },
+    {
       role: "assistant",
-      content: "Acme prefers concise implementation checklists and needs security review links before renewal calls.",
+      content: `Saved confirmed user preference: ${confirmedPreference}`,
     },
   ],
 });
 
 const context = await eak.gumem.recall({
   token,
-  sessionId: "acme-renewal",
-  query: "Before I draft the renewal email for Acme, what preferences and open risks should I remember?",
+  sessionId: "daily-assistant",
+  query: "What confirmed preferences should I consider for this user's next task?",
   details: true,
 });
 
-const draft = await callYourLLM({
-  messages: [
-    {
-      role: "system",
-      content: "Use recalled customer memory as private context. Do not quote it unless it is relevant.",
-    },
-    {
-      role: "user",
-      content: JSON.stringify({
-        task: "Draft a renewal email for Acme's admin team.",
-        memory: context.data,
-      }),
-    },
-  ],
-});
+// Pass context.data into your own assistant response composer or task planner.
+// The SDK example stops here because application orchestration is product-specific.
 ```
 
 ### Do Anything
@@ -326,7 +317,7 @@ const draft = await callYourLLM({
 ```ts
 const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
   token,
-  instruction: "Open Acme's customer portal and summarize product updates relevant to enterprise admins.",
+  instruction: "Open the user's selected product page and summarize updates relevant to their current task.",
   stream: {
     events: [
       EAKEventTypes.DO_ANYTHING_ACTION,
@@ -353,7 +344,7 @@ await eak.doAnything.cancel({
 ```ts
 const search = await eak.webSearch.run<{ id: string }>({
   token,
-  query: "Acme enterprise admin product updates security review release notes",
+  query: "product update notes relevant to the user's current task",
   maxResultsPerQuery: 5,
 });
 
@@ -381,7 +372,7 @@ await eak.track.runNow({
 });
 ```
 
-### GenAuth and EAK Control Plane
+### GenAuth User Context and Management
 
 ```ts
 const client = new EzaoAgentKit({
@@ -391,20 +382,6 @@ const client = new EzaoAgentKit({
 
 const profile = await client.genauth.userInfo({
   accessToken: process.env.GENAUTH_ACCESS_TOKEN!,
-});
-
-const workspaces = await client.eak.workspaces.list({
-  token: process.env.GENAUTH_ACCESS_TOKEN!,
-});
-
-const credential = await client.eak.credentials.create({
-  token: process.env.GENAUTH_ACCESS_TOKEN!,
-  eakTenantId: "eak_tnt_1",
-  allowedScopes: [
-    "webagent.do_anything:session",
-    "webagent.do_anything:run",
-    "webagent.do_anything:events",
-  ],
 });
 
 const users = await client.genauth.users.list({
@@ -418,7 +395,7 @@ const created = await client.genauth.users.create({
 });
 ```
 
-`currentUser`, `genauth.userInfo`, and EAK workspace/credential APIs use a GenAuth access token because they act as a logged-in administrator. `genauth.users.*` is also a management-plane capability, but it uses EAK AK/SK: the SDK signs `POST /api/v3/eak/genauth/admin-token` with an empty JSON body `{}`, receives a standard GenAuth management token plus `userPoolId`, then calls GenAuth v3 user management APIs with `Authorization: Bearer ...` and `x-authing-userpool-id`. It does not send `resource`, `actions`, `expiresIn`, or `EAK_USER_ID`. Runtime capability calls such as GUMem/WebAgent use `delegateToken` output instead.
+`currentUser` and `genauth.userInfo` use a GenAuth access token because they read the logged-in user's identity. `genauth.users.*` is a management-plane capability, but application code still authenticates the SDK with EAK AK/SK: the SDK signs `POST /api/v3/eak/genauth/admin-token` with an empty JSON body `{}`, receives a standard GenAuth management token plus `userPoolId`, then calls GenAuth v3 user management APIs with `Authorization: Bearer ...` and `x-authing-userpool-id`. It does not send `resource`, `actions`, `expiresIn`, or `EAK_USER_ID`. Runtime capability calls such as GUMem/WebAgent use `delegateToken` output instead.
 
 ## API Surface
 
@@ -436,7 +413,7 @@ const eak = new EzaoAgentKit({
 | --- | --- | --- | --- |
 | `accessKey` | `string` | Yes | EAK access key from EAK Console. |
 | `secretKey` | `string` | Yes | EAK secret key from EAK Console. |
-| `host` | `string` | No | EAK Console/SDK gateway host. Defaults to the online EAK Console gateway, `https://eak.eazo.ai/dashboard`. |
+| `host` | `string` | No | Optional EAK Console/SDK gateway override for private or local deployments. |
 | `fetch` | `typeof fetch` | No | Custom transport implementation. |
 | `timeoutMs` | `number` | No | Request timeout. Defaults to `30000`. |
 
@@ -451,7 +428,6 @@ import { EAK, EazoAgentKit, EzaoAgentKit } from "@eazo/eak";
 | Namespace | Methods |
 | --- | --- |
 | Delegation | `delegateToken`, `completeDelegateToken`, deprecated aliases `delegateAgent`, `completeDelegateAgent` |
-| EAK | `workspaces.list`, `workspaces.get`, `workspaces.create`, `workspaces.update`, `credentials.list`, `credentials.create`, `credentials.rotate`, `credentials.update` |
 | GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken`, `users.list`, `users.get`, `users.getBatch`, `users.create`, `users.createBatch`, `users.update`, `users.deleteBatch` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
 | Do Anything | `run`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
@@ -520,7 +496,7 @@ Common first-run errors:
 | `eak.delegation.user_not_bound` | The `userId` is not in the GenAuth userpool bound to this EAK credential. | Use a real user id from `currentUser` or from the same bound userpool. |
 | `eak.genauth.userpool_binding_missing` | The AK/SK is not bound to a GenAuth userpool, so `genauth.users.*` cannot obtain a management token. | Bind the EAK credential to the target GenAuth userpool before calling user management APIs. |
 | `eak.genauth.userpool_owner_missing` | The bound GenAuth userpool has no resolvable owner user for management-token signing. | Fix the GenAuth userpool owner data or binding. |
-| `eak.token_exchange.upstream_failed` with `unauthorized_client` or `grant_type is not enabled` | Delegation succeeded, but the tenant-scoped EAK managed delegation app is missing token-exchange grant support or has drifted from the workspace binding. | Re-run EAK workspace delegation app compensation or repair the managed app binding; new EAK workspaces should enable token-exchange on the managed app automatically. |
+| `eak.token_exchange.upstream_failed` with `unauthorized_client` or `grant_type is not enabled` | Delegation succeeded, but the managed delegation app is missing token-exchange grant support or has drifted from the tenant binding. | Repair the managed delegation app binding before calling GUMem or WebAgent product capabilities. |
 | `delegation.required` | A GUMem/WebAgent call was made without `token`. | Pass `delegation.data.token` to the product namespace call. |
 | `direct delegation token deprecated` | Application code is calling a product service directly with an EAK delegation token. | Call the product through the SDK so token exchange is handled internally. |
 

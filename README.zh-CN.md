@@ -15,10 +15,10 @@ AK/SK 必须只保存在可信服务端，不能下发到浏览器、移动端�
 EAK 把 Agent 授权模型收敛成几个稳定边界：
 
 - 一个 SDK 入口：`new EzaoAgentKit({ accessKey, secretKey })`。
-- 一个发现地址：`host` 指向 EAK Console/SDK 网关，默认值是 `https://eak.eazo.ai/dashboard`，SDK 通过 `/api/v3/eak/runtime-config` 获取 GenAuth、GUMem、WebAgent 等运行时地址。
+- 一条发现路径：`host` 可在私有化或本地部署中覆盖 EAK Console/SDK 网关，SDK 通过 `/api/v3/eak/runtime-config` 获取 GenAuth、GUMem、WebAgent 等运行时地址。
 - 一个授权入口：调用 `delegateToken`；silent 模式直接返回 `data.token`，interactive 模式返回授权 URL，之后由业务服务端完成兑换。
 - 一条管理面路径：调用 `genauth.users.*`，SDK 会先用 AK/SK 换取 GenAuth management token，再调用 GenAuth v3 users API。
-- 一组能力命名空间：`eak`、`genauth`、`gumem`、`webSearch`、`doAnything`、`track`。
+- 一组能力命名空间：`genauth`、`gumem`、`webSearch`、`doAnything`、`track`。
 - 一组可读的 scope 字符串：让最小授权边界直接出现在业务代码里。
 - 一致的错误和审计字段：`requestId`、`traceId`、`auditId`、`retryable`。
 
@@ -36,10 +36,10 @@ yarn add @eazo/eak
 
 - Node.js 18 或更高版本。
 - 服务端运行环境提供 `fetch`。
-- 在 EAK Console 创建的 `accessKey` 与 `secretKey`，线上控制台地址是 `https://eak.eazo.ai/dashboard`。
+- 在 EAK Console 创建的 `accessKey` 与 `secretKey`。
 - silent 运行时产品调用需要一个来自该 EAK credential 绑定 GenAuth userpool 的真实用户 ID。Smoke 测试可以通过 `EAK_USER_ID` 传入；业务代码中应通过 `currentUser` 或服务端已有登录态解析。interactive 委托创建时可以不传 `user` 或 `userId`，因为 EAK Console/BFF 会在授权过程中处理 GenAuth 登录。
 - `genauth.users.*` 管理面调用不需要 `EAK_USER_ID`。SDK 会用 AK/SK 向 EAK 换取 GenAuth management token。
-- 可选的 `host`，用于私有化或本地部署；默认值是 `https://eak.eazo.ai/dashboard`。
+- 可选的 `host`，用于私有化或本地部署；托管版 EAK 通常保持未传。
 
 正常初始化 SDK 时不需要传 `tenantId`。EAK AK/SK 已经在服务端绑定了租户和应用边界。
 
@@ -172,11 +172,7 @@ for await (const event of eak.doAnything.events({
 
 ### Runtime Discovery
 
-`host` 指向 EAK Console/SDK 网关，不直接指向 GenAuth、GUMem 或 WebAgent。如果不传 `host`，SDK 默认使用线上 EAK Console 网关：
-
-```text
-https://eak.eazo.ai/dashboard
-```
+`host` 指向 EAK Console/SDK 网关，不直接指向 GenAuth、GUMem 或 WebAgent。托管版集成通常不传 `host`；私有化和本地部署可以传入自己的网关地址。
 
 SDK 会签名请求：
 
@@ -279,43 +275,38 @@ EAKScopeBundles.GUMEM_SESSION_RECALL
 await eak.gumem.createSession({
   token,
   userId,
-  sessionId: "acme-renewal",
-  title: "Acme 续约调研",
+  sessionId: "daily-assistant",
+  title: "日常助手记忆",
 });
+
+// 你的业务已经向用户收集并确认了这条偏好。
+const confirmedPreference =
+  "请保持每日计划建议简洁，只给出下一步行动。";
 
 await eak.gumem.addMessages({
   token,
-  sessionId: "acme-renewal",
+  sessionId: "daily-assistant",
   messages: [
     {
+      role: "user",
+      content: confirmedPreference,
+    },
+    {
       role: "assistant",
-      content: "Acme 偏好简洁的实施 checklist，续约沟通前需要补充安全评审链接。",
+      content: `已保存用户确认的偏好：${confirmedPreference}`,
     },
   ],
 });
 
 const context = await eak.gumem.recall({
   token,
-  sessionId: "acme-renewal",
-  query: "我准备给 Acme 写续约邮件前，需要记住哪些偏好和未关闭风险？",
+  sessionId: "daily-assistant",
+  query: "这个用户下一个任务需要考虑哪些已经确认的偏好？",
   details: true,
 });
 
-const draft = await callYourLLM({
-  messages: [
-    {
-      role: "system",
-      content: "把召回的客户记忆作为私有上下文使用，只有相关时才引用。",
-    },
-    {
-      role: "user",
-      content: JSON.stringify({
-        task: "给 Acme 管理员团队起草一封续约邮件。",
-        memory: context.data,
-      }),
-    },
-  ],
-});
+// 将 context.data 传给你自己的助手回复生成、任务规划或产品逻辑。
+// SDK 示例到这里结束，因为应用编排由你的业务决定。
 ```
 
 ### Do Anything
@@ -323,7 +314,7 @@ const draft = await callYourLLM({
 ```ts
 const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
   token,
-  instruction: "打开 Acme 客户门户，总结和企业管理员相关的产品更新。",
+  instruction: "打开用户选择的产品页面，总结和当前任务相关的更新。",
   stream: {
     events: [
       EAKEventTypes.DO_ANYTHING_ACTION,
@@ -350,7 +341,7 @@ await eak.doAnything.cancel({
 ```ts
 const search = await eak.webSearch.run<{ id: string }>({
   token,
-  query: "Acme 企业管理员 产品更新 安全评审 release notes",
+  query: "和用户当前任务相关的产品更新说明",
   maxResultsPerQuery: 5,
 });
 
@@ -378,7 +369,7 @@ await eak.track.runNow({
 });
 ```
 
-### GenAuth 与 EAK 管理面
+### GenAuth 用户上下文与用户管理
 
 ```ts
 const client = new EzaoAgentKit({
@@ -388,20 +379,6 @@ const client = new EzaoAgentKit({
 
 const profile = await client.genauth.userInfo({
   accessToken: process.env.GENAUTH_ACCESS_TOKEN!,
-});
-
-const workspaces = await client.eak.workspaces.list({
-  token: process.env.GENAUTH_ACCESS_TOKEN!,
-});
-
-const credential = await client.eak.credentials.create({
-  token: process.env.GENAUTH_ACCESS_TOKEN!,
-  eakTenantId: "eak_tnt_1",
-  allowedScopes: [
-    "webagent.do_anything:session",
-    "webagent.do_anything:run",
-    "webagent.do_anything:events",
-  ],
 });
 
 const users = await client.genauth.users.list({
@@ -415,7 +392,7 @@ const created = await client.genauth.users.create({
 });
 ```
 
-`currentUser`、`genauth.userInfo`、EAK workspace/credential API 使用 GenAuth access token，因为它们代表已登录管理员操作。`genauth.users.*` 也属于管理面能力，但它使用 EAK AK/SK：SDK 会签名请求 `POST /api/v3/eak/genauth/admin-token`，请求体是空 JSON `{}`，拿到标准 GenAuth management token 和 `userPoolId`，再携带 `Authorization: Bearer ...` 与 `x-authing-userpool-id` 调用 GenAuth v3 用户管理 API。这里不传 `resource`、`actions`、`expiresIn` 或 `EAK_USER_ID`。GUMem/WebAgent/Track 等运行时能力才使用 `delegateToken` 返回的 token。
+`currentUser`、`genauth.userInfo` 使用 GenAuth access token 读取已登录用户身份。`genauth.users.*` 也属于管理面能力，但业务代码仍然用 EAK AK/SK 初始化 SDK：SDK 会签名请求 `POST /api/v3/eak/genauth/admin-token`，请求体是空 JSON `{}`，拿到标准 GenAuth management token 和 `userPoolId`，再携带 `Authorization: Bearer ...` 与 `x-authing-userpool-id` 调用 GenAuth v3 用户管理 API。这里不传 `resource`、`actions`、`expiresIn` 或 `EAK_USER_ID`。GUMem/WebAgent/Track 等运行时能力才使用 `delegateToken` 返回的 token。
 
 ## API 概览
 
@@ -433,7 +410,7 @@ const eak = new EzaoAgentKit({
 | --- | --- | --- | --- |
 | `accessKey` | `string` | 是 | EAK Console 创建的 access key。 |
 | `secretKey` | `string` | 是 | EAK Console 创建的 secret key。 |
-| `host` | `string` | 否 | EAK Console/SDK 网关地址，默认指向线上 EAK Console 网关 `https://eak.eazo.ai/dashboard`。 |
+| `host` | `string` | 否 | 私有化或本地部署时可选的 EAK Console/SDK 网关覆盖地址。 |
 | `fetch` | `typeof fetch` | 否 | 自定义传输实现。 |
 | `timeoutMs` | `number` | 否 | 请求超时时间，默认 `30000`。 |
 
@@ -448,7 +425,6 @@ import { EAK, EazoAgentKit, EzaoAgentKit } from "@eazo/eak";
 | 命名空间 | 方法 |
 | --- | --- |
 | 委托授权 | `delegateToken`, `completeDelegateToken`；兼容别名：`delegateAgent`, `completeDelegateAgent` |
-| EAK | `workspaces.list`, `workspaces.get`, `workspaces.create`, `workspaces.update`, `credentials.list`, `credentials.create`, `credentials.rotate`, `credentials.update` |
 | GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken`, `users.list`, `users.get`, `users.getBatch`, `users.create`, `users.createBatch`, `users.update`, `users.deleteBatch` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
 | Do Anything | `run`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
@@ -517,7 +493,7 @@ try {
 | `eak.delegation.user_not_bound` | `userId` 不属于该 EAK credential 绑定的 GenAuth userpool。 | 使用 `currentUser` 返回的真实用户 ID，或确认用户来自同一个绑定 userpool。 |
 | `eak.genauth.userpool_binding_missing` | AK/SK 没有绑定 GenAuth userpool，`genauth.users.*` 无法换取 management token。 | 先把 EAK credential 绑定到目标 GenAuth userpool。 |
 | `eak.genauth.userpool_owner_missing` | 绑定的 GenAuth userpool 找不到可用于签发 management token 的 owner 用户。 | 修复 GenAuth userpool owner 数据或绑定。 |
-| `eak.token_exchange.upstream_failed` 且包含 `unauthorized_client` 或 `grant_type is not enabled` | Delegation 已成功，但 tenant 级 EAK managed delegation app 缺少 token-exchange grant，或 workspace 绑定发生漂移。 | 重新执行 EAK workspace delegation app 补偿/修复；新的 EAK workspace 应该自动在 managed app 上开启 token-exchange。 |
+| `eak.token_exchange.upstream_failed` 且包含 `unauthorized_client` 或 `grant_type is not enabled` | Delegation 已成功，但 managed delegation app 缺少 token-exchange grant，或租户绑定发生漂移。 | 先修复 managed delegation app 绑定，再调用 GUMem 或 WebAgent 产品能力。 |
 | `delegation.required` | GUMem/WebAgent 调用没有传 `token`。 | 把 `delegation.data.token` 传给产品能力方法。 |
 | `direct delegation token deprecated` | 应用直接把 EAK delegation token 打到了产品服务。 | 通过 SDK 调产品能力，让 SDK 在内部完成 token exchange。 |
 

@@ -1,6 +1,6 @@
 ---
 name: eak-sdk
-description: Use when building, testing, debugging, or documenting Node.js integrations with @eazo/eak, EzaoAgentKit/EAK, AK/SK credentials, delegateToken, GenAuth currentUser/userInfo/introspection/user management, EAK runtime-config discovery, EAK workspace/credential APIs, GUMem, WebAgent, Web Search, Do Anything, Track, OBO product token exchange, or local .genauth.localhost SDK flows.
+description: Use when building, testing, debugging, or documenting Node.js integrations with @eazo/eak, EzaoAgentKit/EAK, AK/SK credentials, delegateToken, GenAuth currentUser/userInfo/introspection/user management, EAK runtime-config discovery, GUMem, WebAgent, Web Search, Do Anything, Track, OBO product token exchange, or local .genauth.localhost SDK flows.
 ---
 
 # EAK SDK
@@ -90,25 +90,13 @@ const completed = await eak.completeDelegateToken({
 
 ## Token Roles
 
-- GenAuth access token: proves the logged-in user to `currentUser`, `genauth.userInfo`, and EAK workspace/credential management APIs.
+- GenAuth access token: proves the logged-in user to `currentUser` and `genauth.userInfo`.
 - EAK-derived GenAuth management token: produced internally by SDK-managed `POST /api/v3/eak/genauth/admin-token` with body `{}` for `genauth.users.*`; application code should not supply or persist it in normal flows.
 - EAK delegation token: returned directly by silent `delegateToken`, or by server-side `completeDelegateToken({ grantId, code, state })` after an interactive grant; pass it as `token` to GUMem/WebAgent/Web Search/Do Anything/Track calls.
 - Product access token: produced by the SDK through `/api/v3/eak/token-exchange` when a raw EAK delegation token is used for a product call. Do not hand-roll this exchange in application code.
 - Direct product token: acceptable only when a product service already issued it or a test is intentionally bypassing delegation.
 
 ## Management Plane Vs Runtime
-
-Use GenAuth access tokens for EAK workspace and AK/SK management:
-
-```ts
-await eak.eak.workspaces.list({ token: genauthAccessToken });
-
-await eak.eak.credentials.create({
-  token: genauthAccessToken,
-  eakTenantId: "eak_tnt_1",
-  allowedScopes: EAKScopeBundles.AGENT_DO_ANYTHING_BASIC,
-});
-```
 
 Use AK/SK-backed `genauth.users.*` for GenAuth management-plane user CRUD. This is not a GUMem/WebAgent runtime capability and does not use `delegateToken` or `EAK_USER_ID`. The SDK exchanges AK/SK through EAK for a standard GenAuth management token, then attaches `Authorization` and `x-authing-userpool-id` automatically:
 
@@ -135,7 +123,7 @@ For local stacks, first pin the real service boundary:
 1. `EAK_HOST` should normally be the local EAK Console/BFF gateway, for example `http://127.0.0.1:3100`.
 2. Confirm `GET /api/v3/eak/runtime-config` returns the GenAuth userpool issuer plus GUMem/WebAgent URLs that the product services validate.
 3. If a request URL ends with `.genauth.localhost`, the SDK rewrites it to `127.0.0.1` and preserves the original `Host` header. Set `EAK_LOCAL_GENAUTH_TARGET_HOST=host.docker.internal` when the target must be reached from a containerized product service. Set `EAK_LOCAL_GENAUTH_REWRITE=false` only when DNS already resolves correctly.
-4. If runtime-config works but `delegateToken` returns 403, inspect user binding, scope/resource binding, tenant/workspace binding, and any `apiCode` such as `eak.delegation.user_not_bound`.
+4. If runtime-config works but `delegateToken` returns 403, inspect user binding, scope/resource binding, tenant binding, and any `apiCode` such as `eak.delegation.user_not_bound`.
 5. If GUMem/WebAgent says `direct delegation token deprecated`, the integration is bypassing the SDK-managed product token exchange or calling the product service with a raw delegation token directly.
 
 ## Common Mistakes
@@ -155,7 +143,7 @@ For a real hosted GUMem smoke, require:
 
 - `EAK_ACCESS_KEY` and `EAK_SECRET_KEY`.
 - `EAK_USER_ID`, from the GenAuth userpool bound to the EAK credential. A placeholder like `user_1` usually fails with `eak.delegation.user_not_bound`.
-- Optional `EAK_HOST`; omit it for the hosted default `https://eak.eazo.ai/dashboard`.
+- Optional `EAK_HOST`; use it only for private or local EAK deployments.
 - Optional `EAK_AGENT_ID`; default examples can use `memory-agent`, but the credential and product binding must allow the requested scopes.
 
 If the first real request fails:
@@ -166,7 +154,7 @@ If the first real request fails:
 | `eak.delegation.user_not_bound` | The user id is not in the credential-bound userpool. | Resolve the real user via `currentUser` or the same GenAuth userpool. |
 | `eak.genauth.userpool_binding_missing` | The AK/SK is not bound to a GenAuth userpool. | Bind the EAK credential to the target GenAuth userpool before `genauth.users.*`. |
 | `eak.genauth.userpool_owner_missing` | The bound userpool owner cannot be resolved. | Fix the GenAuth userpool owner data or binding. |
-| `eak.token_exchange.upstream_failed` with `unauthorized_client` or `grant_type is not enabled` | Delegation succeeded, but the tenant-scoped EAK managed delegation app is missing token-exchange grant support or has drifted from the workspace binding. | Re-run EAK workspace delegation app compensation or repair the managed app binding; new EAK workspaces should enable token-exchange on the managed app automatically. |
+| `eak.token_exchange.upstream_failed` with `unauthorized_client` or `grant_type is not enabled` | Delegation succeeded, but the managed delegation app is missing token-exchange grant support or has drifted from the tenant binding. | Repair the managed delegation app binding before calling GUMem or WebAgent product capabilities. |
 | `delegation.required` | A product namespace call omitted `token`. | Pass `delegation.data.token`. |
 | `direct delegation token deprecated` | The app bypassed SDK-managed token exchange. | Call GUMem/WebAgent through the SDK namespace. |
 
