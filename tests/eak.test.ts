@@ -65,7 +65,7 @@ describe("EzaoAgentKit", () => {
 
     const result = await client.delegateToken({
       user: { id: "user_1", subject: "user_1", name: "Test User" },
-      agent: { id: "research-assistant", name: "Research Assistant" },
+      agent: "research-assistant",
       scopes: EAKScopeBundles.AGENT_DO_ANYTHING_BASIC,
       mode: "silent",
     });
@@ -77,7 +77,7 @@ describe("EzaoAgentKit", () => {
     expect(headers["x-authing-signature-method"]).toBe("HMAC-SHA1");
     expect(seen.body).toMatchObject({
       user: { id: "user_1", subject: "user_1", name: "Test User" },
-      agent: { id: "research-assistant", name: "Research Assistant" },
+      agent: "research-assistant",
     });
     expect(result.data).toMatchObject({ token: "token", delegateAgentToken: "token" });
     expect(result.meta).toEqual({ requestId: "req_1" });
@@ -168,7 +168,7 @@ describe("EzaoAgentKit", () => {
 
     const result = await client.eak.delegateToken({
       user: { id: "user_1" },
-      agent: { id: "support-assistant", name: "Support Assistant" },
+      agent: "support-assistant",
       scopes: [EAKScopes.GUMEM_MEMORY_READ],
       mode: "silent",
     });
@@ -177,6 +177,189 @@ describe("EzaoAgentKit", () => {
       token: "namespace-token",
       delegateAgentToken: "namespace-token",
     });
+  });
+
+  it("creates interactive delegateToken grants without user or userId", async () => {
+    const seen: { url?: string; init?: RequestInit; body?: unknown } = {};
+    const client = new EzaoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        seen.url = String(url);
+        seen.init = init;
+        seen.body = JSON.parse(String(init?.body));
+        return jsonResponse({
+          data: {
+            mode: "interactive",
+            authorizationUrl: "https://eak.example.com/authorize?grant_id=grant_interactive",
+            grantId: "grant_interactive",
+            grantState: "grant_state_1",
+            requestedScopes: ["gumem.memory:read", "webagent.run"],
+          },
+          meta: { requestId: "req_interactive" },
+        });
+      }) as typeof fetch,
+    });
+
+    const result = await client.delegateToken({
+      mode: "interactive",
+      redirectUri: "https://app.example.com/eak/callback",
+      state: "business_state_1",
+      agent: "research-assistant",
+      scopes: ["gumem.memory:read", "webagent.run"],
+    });
+
+    expect(seen.url).toBe("https://eak.example.com/api/v3/eak/delegations");
+    expect(seen.init?.method).toBe("POST");
+    expect(seen.body).toEqual({
+      mode: "interactive",
+      redirectUri: "https://app.example.com/eak/callback",
+      state: "business_state_1",
+      agent: "research-assistant",
+      scopes: ["gumem.memory:read", "webagent.run"],
+    });
+    expect(result.data).toMatchObject({
+      mode: "interactive",
+      authorizationUrl: "https://eak.example.com/authorize?grant_id=grant_interactive",
+      grantId: "grant_interactive",
+      grantState: "grant_state_1",
+      state: "grant_state_1",
+      requestedScopes: ["gumem.memory:read", "webagent.run"],
+    });
+  });
+
+  it("normalizes interactive delegateToken state into grantState and state", async () => {
+    const client = new EzaoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      fetch: (async () =>
+        jsonResponse({
+          data: {
+            mode: "interactive",
+            authorizationUrl: "https://eak.example.com/authorize?grant_id=grant_interactive",
+            grantId: "grant_interactive",
+            state: "legacy_state_1",
+          },
+        })) as typeof fetch,
+    });
+
+    const result = await client.delegateToken({
+      mode: "interactive",
+      redirectUri: "https://app.example.com/eak/callback",
+      state: "business_state_1",
+      agent: "research-assistant",
+      scopes: ["gumem.memory:read"],
+    });
+
+    expect(result.data).toMatchObject({
+      authorizationUrl: "https://eak.example.com/authorize?grant_id=grant_interactive",
+      grantId: "grant_interactive",
+      grantState: "legacy_state_1",
+      state: "legacy_state_1",
+    });
+  });
+
+  it("falls back interactive delegateToken state fields to grantId when upstream omits state", async () => {
+    const client = new EzaoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      fetch: (async () =>
+        jsonResponse({
+          data: {
+            mode: "interactive",
+            authorizationUrl: "https://eak.example.com/authorize?grant_id=grant_without_state",
+            grantId: "grant_without_state",
+          },
+        })) as typeof fetch,
+    });
+
+    const result = await client.delegateToken({
+      mode: "interactive",
+      redirectUri: "https://app.example.com/eak/callback",
+      state: "business_state_1",
+      agent: "research-assistant",
+      scopes: ["gumem.memory:read"],
+    });
+
+    expect(result.data).toMatchObject({
+      grantId: "grant_without_state",
+      grantState: "grant_without_state",
+      state: "grant_without_state",
+    });
+  });
+
+  it("returns mode-specific delegateToken result types", async () => {
+    const client = new EzaoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      fetch: (async () =>
+        jsonResponse({
+          data: {
+            mode: "interactive",
+            authorizationUrl: "https://eak.example.com/authorize?grant_id=grant_type",
+            grantId: "grant_type",
+          },
+        })) as typeof fetch,
+    });
+
+    const interactive = await client.delegateToken({
+      mode: "interactive",
+      redirectUri: "https://app.example.com/eak/callback",
+      state: "business_state_1",
+      agent: "research-assistant",
+      scopes: ["gumem.memory:read"],
+    });
+
+    const authorizationUrl: string = interactive.data.authorizationUrl;
+    const grantState: string = interactive.data.grantState;
+    const interactiveMode: "interactive" = interactive.data.mode;
+    expect(authorizationUrl).toContain("grant_type");
+    expect(grantState).toBe("grant_type");
+    expect(interactiveMode).toBe("interactive");
+
+    if (false) {
+      const silent = await client.delegateToken({
+        userId: "user_1",
+        agent: "research-assistant",
+        scopes: ["gumem.memory:read"],
+      });
+      const silentMode: "silent" = silent.data.mode;
+      expect(silentMode).toBe("silent");
+    }
+
+    if (false) {
+      // @ts-expect-error silent mode requires user or userId
+      client.delegateToken({
+        agent: "research-assistant",
+        scopes: ["gumem.memory:read"],
+        mode: "silent",
+      });
+      // @ts-expect-error omitted mode is silent and still requires user or userId
+      client.delegateToken({
+        agent: "research-assistant",
+        scopes: ["gumem.memory:read"],
+      });
+      // @ts-expect-error interactive mode requires redirectUri and state
+      client.delegateToken({
+        mode: "interactive",
+        agent: "research-assistant",
+        scopes: ["gumem.memory:read"],
+      });
+      client.delegateToken({
+        userId: "user_1",
+        // @ts-expect-error agent must be a string id for the GenAuth delegation DTO
+        agent: { id: "research-assistant", name: "Research Assistant" },
+        scopes: ["gumem.memory:read"],
+      });
+    }
   });
 
   it("treats GenAuth statusCode error envelopes as SDK errors", async () => {
@@ -237,19 +420,19 @@ describe("EzaoAgentKit", () => {
   });
 
   it("keeps delegateAgent and completeDelegateAgent as deprecated compatibility aliases", async () => {
-    const seen: { body?: unknown } = {};
+    const seen: { bodies: unknown[] } = { bodies: [] };
     const client = new EzaoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
       genauthBaseUrl: "https://eak.example.com",
       fetch: (async (_url: URL | RequestInfo, init?: RequestInit) => {
-        seen.body = JSON.parse(String(init?.body));
+        seen.bodies.push(JSON.parse(String(init?.body)));
         return jsonResponse({
           data: {
             mode: "interactive",
             tokenType: "Bearer",
-            delegateAgentToken: "token_interactive",
+            token: "token_interactive",
             expiresIn: 3600,
             grantId: "grant_1",
             auditId: "audit_1",
@@ -259,6 +442,7 @@ describe("EzaoAgentKit", () => {
     });
 
     const result = await client.completeDelegateAgent({
+      grantId: "grant_1",
       code: "code_1",
       state: "state_1",
     });
@@ -269,11 +453,71 @@ describe("EzaoAgentKit", () => {
       mode: "silent",
     });
 
-    expect(seen.body).toEqual({ code: "code_1", state: "state_1" });
-    expect(result.data.token).toBe("token_interactive");
+    expect(seen.bodies[0]).toEqual({ grantId: "grant_1", code: "code_1", state: "state_1" });
+    expect(result.data).toMatchObject({
+      token: "token_interactive",
+      delegateAgentToken: "token_interactive",
+    });
     await expect(alias).resolves.toMatchObject({
       data: { token: "token_interactive", delegateAgentToken: "token_interactive" },
     });
+  });
+
+  it("exposes completeDelegateToken as the recommended callback helper", async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const client = new EzaoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return jsonResponse({
+          data: {
+            token: `token_${calls.length}`,
+            tokenType: "Bearer",
+            expiresIn: 3600,
+            grantId: "grant_1",
+            auditId: "audit_1",
+          },
+        });
+      }) as typeof fetch,
+    });
+
+    const result = await client.completeDelegateToken({
+      grantId: "grant_1",
+      code: "code_1",
+      state: "state_1",
+    });
+    const namespaceResult = await client.eak.completeDelegateToken({
+      grantId: "grant_2",
+      code: "code_2",
+      state: "state_2",
+    });
+
+    expect(calls).toEqual([
+      {
+        url: "https://eak.example.com/api/v3/eak/delegations/complete",
+        body: { grantId: "grant_1", code: "code_1", state: "state_1" },
+      },
+      {
+        url: "https://eak.example.com/api/v3/eak/delegations/complete",
+        body: { grantId: "grant_2", code: "code_2", state: "state_2" },
+      },
+    ]);
+    expect(result.data).toMatchObject({
+      token: "token_1",
+      delegateAgentToken: "token_1",
+    });
+    expect(namespaceResult.data).toMatchObject({
+      token: "token_2",
+      delegateAgentToken: "token_2",
+    });
+
+    if (false) {
+      // @ts-expect-error current callback contract requires grantId
+      client.completeDelegateToken({ code: "code_1", state: "state_1" });
+    }
   });
 
   it("exposes GenAuth helpers through the EAK gateway host", async () => {

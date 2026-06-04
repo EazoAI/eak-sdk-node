@@ -7,7 +7,7 @@ description: Use when building, testing, debugging, or documenting Node.js integ
 
 ## Core Contract
 
-Use `@eazo/eak` from trusted server-side Node.js code. Keep AK/SK on the server and create one reusable `EzaoAgentKit`. For runtime product calls, resolve a real GenAuth user id from the credential-bound userpool, call `delegateToken`, then pass `delegation.data.token` explicitly to every product capability call. For GenAuth user management, call `eak.genauth.users.*`; the SDK exchanges AK/SK for a standard GenAuth management token internally and does not require `EAK_USER_ID`.
+Use `@eazo/eak` from trusted server-side Node.js code. Keep AK/SK on the server and create one reusable `EzaoAgentKit`. For silent runtime product calls, resolve a real GenAuth user id from the credential-bound userpool, call `delegateToken`, then pass `delegation.data.token` explicitly to every product capability call. For interactive runtime authorization, call `delegateToken({ mode: "interactive", redirectUri, state, agent, scopes })` from the server without exposing AK/SK; redirect the user to `authorizationUrl`, then handle the business callback server-side with `completeDelegateToken({ grantId, code, state })` to receive the token. For GenAuth user management, call `eak.genauth.users.*`; the SDK exchanges AK/SK for a standard GenAuth management token internally and does not require `EAK_USER_ID`.
 
 ```ts
 import { EzaoAgentKit, EAKScopeBundles, EAKScopes } from "@eazo/eak";
@@ -58,7 +58,27 @@ const run = await eak.doAnything.run({
 });
 ```
 
-`EAK` and `EazoAgentKit` are compatibility aliases. Prefer the correctly spelled `EzaoAgentKit` in new examples. `delegateAgent` and `completeDelegateAgent` remain deprecated compatibility helpers; prefer `delegateToken` unless you are deliberately maintaining an old interactive callback flow.
+For explicit authorization, the EAK Console/BFF owns GenAuth login and grant completion before it redirects back to the business `redirectUri`. The redirect only carries one-time callback fields such as `code`, `state`, and `grant_state`/`grantId`; never design an API that exposes a delegation token to browser code.
+
+```ts
+const grant = await eak.delegateToken({
+  mode: "interactive",
+  redirectUri: "https://app.example.com/eak/callback",
+  state: "business-csrf-state",
+  agent: "research-assistant",
+  scopes: [EAKScopes.GUMEM_MEMORY_READ],
+});
+
+redirectUserTo(grant.data.authorizationUrl);
+
+const completed = await eak.completeDelegateToken({
+  grantId,
+  code,
+  state,
+});
+```
+
+`EAK` and `EazoAgentKit` are compatibility aliases. Prefer the correctly spelled `EzaoAgentKit` in new examples. `delegateAgent` and `completeDelegateAgent` remain deprecated compatibility names. Use `completeDelegateToken` for interactive callbacks; the current callback contract is `{ grantId, code, state }`, not the old `{ code, state }` shape.
 
 ## Runtime Discovery
 
@@ -72,7 +92,7 @@ const run = await eak.doAnything.run({
 
 - GenAuth access token: proves the logged-in user to `currentUser`, `genauth.userInfo`, and EAK workspace/credential management APIs.
 - EAK-derived GenAuth management token: produced internally by SDK-managed `POST /api/v3/eak/genauth/admin-token` with body `{}` for `genauth.users.*`; application code should not supply or persist it in normal flows.
-- EAK delegation token: returned by `delegateToken`; pass it as `token` to GUMem/WebAgent/Web Search/Do Anything/Track calls.
+- EAK delegation token: returned directly by silent `delegateToken`, or by server-side `completeDelegateToken({ grantId, code, state })` after an interactive grant; pass it as `token` to GUMem/WebAgent/Web Search/Do Anything/Track calls.
 - Product access token: produced by the SDK through `/api/v3/eak/token-exchange` when a raw EAK delegation token is used for a product call. Do not hand-roll this exchange in application code.
 - Direct product token: acceptable only when a product service already issued it or a test is intentionally bypassing delegation.
 
@@ -122,11 +142,11 @@ For local stacks, first pin the real service boundary:
 
 - Do not put `delegateAgent`, user ids, or product tokens in the constructor.
 - Do not call `eak.gumem.*`, `eak.webSearch.*`, `eak.doAnything.*`, or `eak.track.*` without `token`.
-- Do not treat `agent.id` as the only authorization boundary. It is stable display and audit metadata; scopes and resource bindings carry permission.
-- Do not invent `user.id`. Use a real GenAuth user or the value returned by `currentUser`.
+- Do not pass Agent metadata objects to `delegateToken`. Use a string Agent id such as `agent: "memory-agent"`; scopes and resource bindings carry permission.
+- Do not invent `user.id`. Silent mode needs a real GenAuth user or the value returned by `currentUser`; interactive mode can omit `user`/`userId` because Console/BFF resolves the user through GenAuth login.
 - Do not pass a long-lived GenAuth admin token to `genauth.users.*` in normal server integrations. Use AK/SK and let SDK call EAK's admin-token endpoint with body `{}`.
 - Do not add `resource`, `actions`, `expiresIn`, or `EAK_USER_ID` to the GenAuth admin-token exchange.
-- Do not expose AK/SK or delegated tokens to untrusted browser/mobile/public CLI code.
+- Do not expose AK/SK or delegated tokens to untrusted browser/mobile/public CLI code. Interactive callbacks exchange only `grantId`, `code`, and `state` on the business server.
 - Do not commit real AK/SK, GenAuth access tokens, product tokens, cookies, or LLM keys.
 
 ## Real Smoke Inputs
@@ -146,7 +166,7 @@ If the first real request fails:
 | `eak.delegation.user_not_bound` | The user id is not in the credential-bound userpool. | Resolve the real user via `currentUser` or the same GenAuth userpool. |
 | `eak.genauth.userpool_binding_missing` | The AK/SK is not bound to a GenAuth userpool. | Bind the EAK credential to the target GenAuth userpool before `genauth.users.*`. |
 | `eak.genauth.userpool_owner_missing` | The bound userpool owner cannot be resolved. | Fix the GenAuth userpool owner data or binding. |
-| `eak.token_exchange.upstream_failed` with `unauthorized_client` or `grant_type is not enabled` | Delegation succeeded, but the bound GenAuth application has not enabled the OIDC token-exchange grant required for GUMem/WebAgent product tokens. | Enable the token-exchange grant in GenAuth Console under Application Configuration -> Other Configuration -> Authorization Mode, then rerun the GUMem/WebAgent smoke. |
+| `eak.token_exchange.upstream_failed` with `unauthorized_client` or `grant_type is not enabled` | Delegation succeeded, but the tenant-scoped EAK managed delegation app is missing token-exchange grant support or has drifted from the workspace binding. | Re-run EAK workspace delegation app compensation or repair the managed app binding; new EAK workspaces should enable token-exchange on the managed app automatically. |
 | `delegation.required` | A product namespace call omitted `token`. | Pass `delegation.data.token`. |
 | `direct delegation token deprecated` | The app bypassed SDK-managed token exchange. | Call GUMem/WebAgent through the SDK namespace. |
 

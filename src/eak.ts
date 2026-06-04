@@ -1,10 +1,16 @@
 import type {
   CompleteDelegateAgentInput,
+  CompleteDelegateTokenInput,
   DelegateAgentInput,
   DelegateAgentResponse,
+  DelegateTokenInteractiveInput,
   DelegateTokenInput,
+  DelegateTokenResponse,
+  DelegateTokenSilentResponse,
+  DelegateTokenSilentInput,
   EAKResponse,
   EAKTransport,
+  InteractiveDelegationResponse,
   JsonObject,
   TokenInput,
 } from "./types";
@@ -47,24 +53,28 @@ export interface EAKCredentialUpdateInput extends EAKCredentialRotateInput {
   metadata?: JsonObject;
 }
 
-type DelegateToken = (
-  input: DelegateTokenInput,
-) => Promise<EAKResponse<DelegateAgentResponse>>;
-type CompleteDelegateAgent = (
-  input: CompleteDelegateAgentInput,
-) => Promise<EAKResponse<Exclude<DelegateAgentResponse, { authorizationUrl: string }>>>;
+type DelegateToken = {
+  (input: DelegateTokenInteractiveInput): Promise<EAKResponse<InteractiveDelegationResponse>>;
+  (input: DelegateTokenSilentInput): Promise<EAKResponse<DelegateTokenSilentResponse>>;
+  (input: DelegateTokenInput): Promise<EAKResponse<DelegateAgentResponse>>;
+};
+type CompleteDelegateToken = (
+  input: CompleteDelegateTokenInput,
+) => Promise<EAKResponse<DelegateTokenResponse>>;
 
 export function createEakNamespace(
   transport: EAKTransport,
   delegateToken: DelegateToken,
-  completeDelegateAgent: CompleteDelegateAgent,
+  completeDelegateToken: CompleteDelegateToken,
 ) {
   return {
     delegateToken,
     /** @deprecated Use delegateToken. */
     delegateAgent: (input: DelegateAgentInput) => delegateToken(input),
-    /** @deprecated Interactive grants are not part of the recommended one-step delegateToken flow. */
-    completeDelegateAgent,
+    completeDelegateToken,
+    /** @deprecated Use completeDelegateToken. */
+    completeDelegateAgent: (input: CompleteDelegateAgentInput) =>
+      completeDelegateToken(input),
 
     workspaces: {
       list: <T = unknown>(input: TokenInput): Promise<EAKResponse<T>> =>

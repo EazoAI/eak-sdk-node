@@ -37,12 +37,16 @@ export type {
 } from "./genauth";
 export type {
   CompleteDelegateAgentInput,
+  CompleteDelegateTokenInput,
   DelegateAgentInput,
   DelegateAgentResponse,
   DelegateAgentTokenResponse,
+  DelegateTokenInteractiveInput,
   DelegateTokenInput,
   DelegateTokenResponse,
   DelegateTokenResult,
+  DelegateTokenSilentInput,
+  DelegateTokenSilentResponse,
   DelegationMode,
   DelegationTokenResponse,
   EAKEvent,

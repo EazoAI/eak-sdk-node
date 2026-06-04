@@ -62,26 +62,54 @@ export interface UserRef {
   [key: string]: unknown;
 }
 
-export interface DelegateTokenInput {
-  user?: UserRef;
-  /** @deprecated Use user. */
-  userId?: string;
-  agent: string | { id: string; name?: string; description?: string };
+interface DelegateTokenBaseInput {
+  agent: string;
   scopes: readonly string[];
-  mode?: DelegationMode;
-  redirectUri?: string;
-  state?: string;
   expiresIn?: string | number;
   idempotencyKey?: string;
 }
 
+export type DelegateTokenSilentInput = DelegateTokenBaseInput & {
+  mode?: "silent";
+  redirectUri?: string;
+  state?: string;
+} & (
+  | {
+      user: UserRef;
+      /** @deprecated Use user. */
+      userId?: string;
+    }
+  | {
+      user?: UserRef;
+      /** @deprecated Use user. */
+      userId: string;
+    }
+);
+
+export interface DelegateTokenInteractiveInput extends DelegateTokenBaseInput {
+  mode: "interactive";
+  redirectUri: string;
+  state: string;
+  user?: UserRef;
+  /** @deprecated Use user. */
+  userId?: string;
+}
+
+export type DelegateTokenInput =
+  | DelegateTokenSilentInput
+  | DelegateTokenInteractiveInput;
+
 /** @deprecated Use DelegateTokenInput. */
 export type DelegateAgentInput = DelegateTokenInput;
 
-export interface CompleteDelegateAgentInput {
+export interface CompleteDelegateTokenInput {
+  grantId: string;
   code: string;
   state: string;
 }
+
+/** @deprecated Use CompleteDelegateTokenInput. */
+export type CompleteDelegateAgentInput = CompleteDelegateTokenInput;
 
 export interface DelegateTokenResponse {
   mode: DelegationMode;
@@ -97,6 +125,8 @@ export interface DelegateTokenResponse {
   grantedScopes?: string[];
 }
 
+export type DelegateTokenSilentResponse = DelegateTokenResponse & { mode: "silent" };
+
 /** @deprecated Use DelegateTokenResponse. */
 export type DelegateAgentTokenResponse = DelegateTokenResponse;
 
@@ -107,6 +137,7 @@ export interface InteractiveDelegationResponse {
   mode: "interactive";
   authorizationUrl: string;
   grantId: string;
+  grantState: string;
   state: string;
   requestedScopes?: string[];
 }

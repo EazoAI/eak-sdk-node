@@ -8,8 +8,10 @@ import { createTrackNamespace } from "./track";
 import {
   isJsonObject,
   type CompleteDelegateAgentInput,
+  type CompleteDelegateTokenInput,
   type DelegateAgentInput,
   type DelegateAgentResponse,
+  type DelegateTokenInteractiveInput,
   type DelegateTokenInput,
   type EAKEvent,
   type EAKHttpMethod,
@@ -18,6 +20,10 @@ import {
   type EAKRuntimeConfig,
   type EAKService,
   type EAKTransport,
+  type DelegateTokenResponse,
+  type DelegateTokenSilentResponse,
+  type DelegateTokenSilentInput,
+  type InteractiveDelegationResponse,
   type JsonObject,
   type RawRequestInput,
   type RequestPayload,
@@ -69,8 +75,8 @@ export class EzaoAgentKit {
     });
     this.eak = createEakNamespace(
       transport,
-      (input) => this.delegateToken(input),
-      (input) => this.completeDelegateAgent(input),
+      this.delegateToken.bind(this),
+      (input) => this.completeDelegateToken(input),
     );
     this.gumem = createGumemNamespace(transport);
     this.webSearch = createWebSearchNamespace(transport);
@@ -79,8 +85,11 @@ export class EzaoAgentKit {
   }
 
   delegateToken(
-    input: DelegateTokenInput,
-  ): Promise<EAKResponse<DelegateAgentResponse>> {
+    input: DelegateTokenInteractiveInput,
+  ): Promise<EAKResponse<InteractiveDelegationResponse>>;
+  delegateToken(input: DelegateTokenSilentInput): Promise<EAKResponse<DelegateTokenSilentResponse>>;
+  delegateToken(input: DelegateTokenInput): Promise<EAKResponse<DelegateAgentResponse>>;
+  delegateToken(input: DelegateTokenInput): Promise<EAKResponse<DelegateAgentResponse>> {
     return this.signedPost<DelegateAgentResponse>(
       "/api/v3/eak/delegations",
       normalizeDelegateTokenInput(input),
@@ -92,16 +101,22 @@ export class EzaoAgentKit {
     return this.delegateToken(input);
   }
 
-  /** @deprecated Interactive grants are not part of the recommended one-step delegateToken flow. */
-  completeDelegateAgent(
-    input: CompleteDelegateAgentInput,
-  ): Promise<EAKResponse<Exclude<DelegateAgentResponse, { authorizationUrl: string }>>> {
-    return this.signedPost<Exclude<DelegateAgentResponse, { authorizationUrl: string }>>(
+  completeDelegateToken(
+    input: CompleteDelegateTokenInput,
+  ): Promise<EAKResponse<DelegateTokenResponse>> {
+    return this.signedPost<DelegateTokenResponse>(
       "/api/v3/eak/delegations/complete",
       input,
     ).then(
       normalizeDelegateAgentTokenResponse,
     );
+  }
+
+  /** @deprecated Use completeDelegateToken. */
+  completeDelegateAgent(
+    input: CompleteDelegateAgentInput,
+  ): Promise<EAKResponse<DelegateTokenResponse>> {
+    return this.completeDelegateToken(input);
   }
 
   currentUser<T = unknown>(input: GenAuthAccessTokenInput): Promise<EAKResponse<T>> {
@@ -777,6 +792,24 @@ function normalizeDelegateAgentTokenResponse<T extends DelegateAgentResponse>(
   response: EAKResponse<T>,
 ): EAKResponse<T> {
   if (!isJsonObject(response.data)) return response;
+  const grantState =
+    typeof response.data.grantState === "string"
+      ? response.data.grantState
+      : typeof response.data.state === "string"
+        ? response.data.state
+        : typeof response.data.grantId === "string"
+          ? response.data.grantId
+          : undefined;
+  if (typeof response.data.authorizationUrl === "string" && grantState) {
+    return {
+      ...response,
+      data: {
+        ...response.data,
+        grantState,
+        state: grantState,
+      } as T,
+    };
+  }
   const token =
     typeof response.data.delegateAgentToken === "string"
       ? response.data.delegateAgentToken

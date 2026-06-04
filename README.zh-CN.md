@@ -2,11 +2,11 @@
 
 [English](./README.md) | 中文
 
-`@eazo/eak` 是面向 Node.js 服务端的统一 EAK SDK，用一条清晰的调用链串起 Agent 委托授权、GenAuth 用户管理、GUMem 长期记忆、WebAgent 网页行动、Web Search 和 Track 监控能力。
+`@eazo/eak` 是面向 Node.js 服务端的统一 EAK SDK，用一条清晰的调用链串起 Agent 委托授权、GenAuth 用户管理、GUMem 长期记忆、WebAgent 网页行动、Do Anything、Web Search 和 Track 监控能力。
 
 当一个 Agent 真正开始帮用户做事时，它不能只拿一把后台密钥到处调用接口。它需要知道用户是谁、用户允许它做什么、这次授权什么时候过期、页面里发生了什么、最后每一步能不能被追溯。
 
-`@eazo/eak` 解决的是两类服务端调用：运行时产品调用时，应用服务端先确认 GenAuth 用户，再通过 `delegateToken` 申请短期委托 token，之后每次 GUMem/WebAgent/Web Search/Track 调用都把这个 token 传入 `token` 字段；GenAuth 用户管理调用时，SDK 会用 EAK AK/SK 换取标准 GenAuth management token，再调用 GenAuth v3 users API。
+`@eazo/eak` 解决的是两类服务端调用：运行时产品调用时，应用服务端先确认 GenAuth 用户，再通过 `delegateToken` 申请短期委托 token，之后每次 GUMem/WebAgent/Do Anything/Web Search/Track 调用都把这个 token 传入 `token` 字段；GenAuth 用户管理调用时，SDK 会用 EAK AK/SK 换取标准 GenAuth management token，再调用 GenAuth v3 users API。
 
 AK/SK 必须只保存在可信服务端，不能下发到浏览器、移动端、公开 CLI 配置或其他不可信运行环境。
 
@@ -16,7 +16,7 @@ EAK 把 Agent 授权模型收敛成几个稳定边界：
 
 - 一个 SDK 入口：`new EzaoAgentKit({ accessKey, secretKey })`。
 - 一个发现地址：`host` 指向 EAK Console/SDK 网关，默认值是 `https://eak.eazo.ai/dashboard`，SDK 通过 `/api/v3/eak/runtime-config` 获取 GenAuth、GUMem、WebAgent 等运行时地址。
-- 一个授权步骤：调用 `delegateToken`，再把 `data.token` 传给产品能力方法。
+- 一个授权入口：调用 `delegateToken`；silent 模式直接返回 `data.token`，interactive 模式返回授权 URL，之后由业务服务端完成兑换。
 - 一条管理面路径：调用 `genauth.users.*`，SDK 会先用 AK/SK 换取 GenAuth management token，再调用 GenAuth v3 users API。
 - 一组能力命名空间：`eak`、`genauth`、`gumem`、`webSearch`、`doAnything`、`track`。
 - 一组可读的 scope 字符串：让最小授权边界直接出现在业务代码里。
@@ -37,7 +37,7 @@ yarn add @eazo/eak
 - Node.js 18 或更高版本。
 - 服务端运行环境提供 `fetch`。
 - 在 EAK Console 创建的 `accessKey` 与 `secretKey`，线上控制台地址是 `https://eak.eazo.ai/dashboard`。
-- 运行时产品调用需要一个来自该 EAK credential 绑定 GenAuth userpool 的真实用户 ID。Smoke 测试可以通过 `EAK_USER_ID` 传入；业务代码中应通过 `currentUser` 或服务端已有登录态解析。
+- silent 运行时产品调用需要一个来自该 EAK credential 绑定 GenAuth userpool 的真实用户 ID。Smoke 测试可以通过 `EAK_USER_ID` 传入；业务代码中应通过 `currentUser` 或服务端已有登录态解析。interactive 委托创建时可以不传 `user` 或 `userId`，因为 EAK Console/BFF 会在授权过程中处理 GenAuth 登录。
 - `genauth.users.*` 管理面调用不需要 `EAK_USER_ID`。SDK 会用 AK/SK 向 EAK 换取 GenAuth management token。
 - 可选的 `host`，用于私有化或本地部署；默认值是 `https://eak.eazo.ai/dashboard`。
 
@@ -106,7 +106,7 @@ await eak.genauth.users.update({
 
 ### 运行时产品委托
 
-GUMem、WebAgent、Web Search、Do Anything、Track 是代表终端用户执行的运行时产品能力。这类调用需要一个来自 EAK credential 绑定 userpool 的真实 GenAuth 用户 ID，再使用 `delegateToken` 返回的 token。
+GUMem、WebAgent、Do Anything、Web Search、Track 是代表终端用户执行的运行时产品能力。silent 委托需要一个来自 EAK credential 绑定 userpool 的真实 GenAuth 用户 ID，再使用 `delegateToken` 返回的 token。
 
 ```ts
 const userId = process.env.EAK_USER_ID!;
@@ -192,14 +192,14 @@ GET /api/v3/eak/runtime-config
 
 ### delegateToken
 
-`delegateToken` 绑定四件事：
+silent 模式下，`delegateToken` 绑定四件事：
 
 - 当前用户 ID。
 - Agent ID。
 - 本次请求的 scopes。
 - token 过期时间与审计上下文。
 
-产品能力方法传入 `token: delegation.data.token`。如果这个 token 是 EAK delegation token，SDK 会在内部换成 GUMem 或 WebAgent 所需的产品 access token，再调用下游服务。
+silent 产品能力方法传入 `token: delegation.data.token`。如果这个 token 是 EAK delegation token，SDK 会在内部换成 GUMem 或 WebAgent 所需的产品 access token，再调用下游服务。
 
 ```ts
 const delegation = await eak.delegateToken({
@@ -215,7 +215,38 @@ await eak.gumem.recall({
 });
 ```
 
-`delegateAgent` 和 `completeDelegateAgent` 仍保留为旧显式授权形态的兼容别名。新接入优先使用 `delegateToken`。
+interactive 模式下，业务服务端仍然先调用 `delegateToken`，但这一步不会拿到 token：
+
+```ts
+const grant = await eak.delegateToken({
+  mode: "interactive",
+  redirectUri: "https://app.example.com/eak/callback",
+  state: "business-csrf-state",
+  agent: "research-assistant",
+  scopes: ["gumem.memory:read", "webagent.do_anything:run"],
+});
+
+redirectUserTo(grant.data.authorizationUrl);
+```
+
+用户访问 `authorizationUrl` 进入 EAK Console/BFF。若用户未登录，Console/BFF 会先走 GenAuth 登录；授权确认后由 Console/BFF 统一 complete，再回跳业务 `redirectUri`，只带一次性 `code`、业务 `state`、`grant_state`/`grantId`。浏览器不会拿到 delegation token。
+
+业务 callback handler 在服务端用 AK/SK 兑换最终 token：
+
+```ts
+const completed = await eak.completeDelegateToken({
+  grantId: String(req.query.grantId ?? req.query.grant_id),
+  code: String(req.query.code),
+  state: String(req.query.state),
+});
+
+await eak.gumem.recall({
+  token: completed.data.token,
+  query: "研究偏好",
+});
+```
+
+`completeDelegateToken` 是推荐的服务端 callback helper。`delegateAgent` 和 `completeDelegateAgent` 仍保留为 deprecated 兼容命名，但当前 callback 契约是 `{ grantId, code, state }`；旧的 `{ code, state }` complete 签名不再兼容。
 
 ## Scope 怎么选
 
@@ -248,26 +279,69 @@ EAKScopeBundles.GUMEM_SESSION_RECALL
 await eak.gumem.createSession({
   token,
   userId,
-  sessionId: "account-research",
-  title: "客户调研",
+  sessionId: "acme-renewal",
+  title: "Acme 续约调研",
 });
 
 await eak.gumem.addMessages({
   token,
-  sessionId: "account-research",
+  sessionId: "acme-renewal",
   messages: [
     {
       role: "assistant",
-      content: "客户偏好简洁的实施 checklist。",
+      content: "Acme 偏好简洁的实施 checklist，续约沟通前需要补充安全评审链接。",
     },
   ],
 });
 
 const context = await eak.gumem.recall({
   token,
-  sessionId: "account-research",
-  query: "会前需要记住哪些用户偏好？",
+  sessionId: "acme-renewal",
+  query: "我准备给 Acme 写续约邮件前，需要记住哪些偏好和未关闭风险？",
   details: true,
+});
+
+const draft = await callYourLLM({
+  messages: [
+    {
+      role: "system",
+      content: "把召回的客户记忆作为私有上下文使用，只有相关时才引用。",
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        task: "给 Acme 管理员团队起草一封续约邮件。",
+        memory: context.data,
+      }),
+    },
+  ],
+});
+```
+
+### Do Anything
+
+```ts
+const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
+  token,
+  instruction: "打开 Acme 客户门户，总结和企业管理员相关的产品更新。",
+  stream: {
+    events: [
+      EAKEventTypes.DO_ANYTHING_ACTION,
+      EAKEventTypes.DO_ANYTHING_OBSERVATION,
+      EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME,
+      EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED,
+      EAKEventTypes.DO_ANYTHING_ARTIFACT,
+      EAKEventTypes.DO_ANYTHING_FINAL,
+    ],
+  },
+  context: { memory: context.data },
+});
+
+await eak.doAnything.cancel({
+  token,
+  sessionId: run.data.sessionId,
+  runId: run.data.id,
+  reason: "用户停止任务",
 });
 ```
 
@@ -276,7 +350,7 @@ const context = await eak.gumem.recall({
 ```ts
 const search = await eak.webSearch.run<{ id: string }>({
   token,
-  query: "example.com 最新产品更新",
+  query: "Acme 企业管理员 产品更新 安全评审 release notes",
   maxResultsPerQuery: 5,
 });
 
@@ -286,30 +360,6 @@ for await (const event of eak.webSearch.events({
 })) {
   console.log(event.event, event.data);
 }
-```
-
-### Do Anything
-
-```ts
-const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
-  token,
-  instruction: "对比两个价格页，返回发生变化的套餐。",
-  stream: {
-    events: [
-      EAKEventTypes.DO_ANYTHING_ACTION,
-      EAKEventTypes.DO_ANYTHING_OBSERVATION,
-      EAKEventTypes.DO_ANYTHING_ARTIFACT,
-      EAKEventTypes.DO_ANYTHING_FINAL,
-    ],
-  },
-});
-
-await eak.doAnything.cancel({
-  token,
-  sessionId: run.data.sessionId,
-  runId: run.data.id,
-  reason: "用户停止任务",
-});
 ```
 
 ### Track
@@ -331,15 +381,20 @@ await eak.track.runNow({
 ### GenAuth 与 EAK 管理面
 
 ```ts
-const profile = await eak.genauth.userInfo({
+const client = new EzaoAgentKit({
+  accessKey: process.env.EAK_ACCESS_KEY!,
+  secretKey: process.env.EAK_SECRET_KEY!,
+});
+
+const profile = await client.genauth.userInfo({
   accessToken: process.env.GENAUTH_ACCESS_TOKEN!,
 });
 
-const workspaces = await eak.eak.workspaces.list({
+const workspaces = await client.eak.workspaces.list({
   token: process.env.GENAUTH_ACCESS_TOKEN!,
 });
 
-const credential = await eak.eak.credentials.create({
+const credential = await client.eak.credentials.create({
   token: process.env.GENAUTH_ACCESS_TOKEN!,
   eakTenantId: "eak_tnt_1",
   allowedScopes: [
@@ -349,12 +404,12 @@ const credential = await eak.eak.credentials.create({
   ],
 });
 
-const users = await eak.genauth.users.list({
+const users = await client.genauth.users.list({
   page: 1,
   limit: 20,
 });
 
-const created = await eak.genauth.users.create({
+const created = await client.genauth.users.create({
   username: "sdk-demo-user",
   password: process.env.GENAUTH_DEMO_USER_PASSWORD!,
 });
@@ -392,12 +447,12 @@ import { EAK, EazoAgentKit, EzaoAgentKit } from "@eazo/eak";
 
 | 命名空间 | 方法 |
 | --- | --- |
-| 委托授权 | `delegateToken`；兼容别名：`delegateAgent`, `completeDelegateAgent` |
+| 委托授权 | `delegateToken`, `completeDelegateToken`；兼容别名：`delegateAgent`, `completeDelegateAgent` |
 | EAK | `workspaces.list`, `workspaces.get`, `workspaces.create`, `workspaces.update`, `credentials.list`, `credentials.create`, `credentials.rotate`, `credentials.update` |
 | GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken`, `users.list`, `users.get`, `users.getBatch`, `users.create`, `users.createBatch`, `users.update`, `users.deleteBatch` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
-| Web Search | `run`, `get`, `refine`, `events`, `cancel` |
 | Do Anything | `run`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
+| Web Search | `run`, `get`, `refine`, `events`, `cancel` |
 | Track | `createMonitor`, `getMonitor`, `updateMonitor`, `deleteMonitor`, `runNow`, `events` |
 
 Browser Use、Deep Research、Site Login 的 scope 已预留，但产品运行时 SDK 方法导出前不作为公开方法说明。
@@ -462,7 +517,7 @@ try {
 | `eak.delegation.user_not_bound` | `userId` 不属于该 EAK credential 绑定的 GenAuth userpool。 | 使用 `currentUser` 返回的真实用户 ID，或确认用户来自同一个绑定 userpool。 |
 | `eak.genauth.userpool_binding_missing` | AK/SK 没有绑定 GenAuth userpool，`genauth.users.*` 无法换取 management token。 | 先把 EAK credential 绑定到目标 GenAuth userpool。 |
 | `eak.genauth.userpool_owner_missing` | 绑定的 GenAuth userpool 找不到可用于签发 management token 的 owner 用户。 | 修复 GenAuth userpool owner 数据或绑定。 |
-| `eak.token_exchange.upstream_failed` 且包含 `unauthorized_client` 或 `grant_type is not enabled` | Delegation 已成功，但绑定的 GenAuth 应用没有开启 GUMem/WebAgent 产品 token 所需的 OIDC token-exchange grant。 | 到 GenAuth Console 的 Application Configuration -> Other Configuration -> Authorization Mode 开启 token-exchange grant，然后重跑 GUMem/WebAgent smoke。 |
+| `eak.token_exchange.upstream_failed` 且包含 `unauthorized_client` 或 `grant_type is not enabled` | Delegation 已成功，但 tenant 级 EAK managed delegation app 缺少 token-exchange grant，或 workspace 绑定发生漂移。 | 重新执行 EAK workspace delegation app 补偿/修复；新的 EAK workspace 应该自动在 managed app 上开启 token-exchange。 |
 | `delegation.required` | GUMem/WebAgent 调用没有传 `token`。 | 把 `delegation.data.token` 传给产品能力方法。 |
 | `direct delegation token deprecated` | 应用直接把 EAK delegation token 打到了产品服务。 | 通过 SDK 调产品能力，让 SDK 在内部完成 token exchange。 |
 
