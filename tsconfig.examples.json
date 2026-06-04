@@ -3,6 +3,10 @@
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "baseUrl": ".",
+    "paths": {
+      "@eazo/eak": ["./dist/index.d.ts"]
+    },
     "rootDir": ".",
     "noEmit": true
   },

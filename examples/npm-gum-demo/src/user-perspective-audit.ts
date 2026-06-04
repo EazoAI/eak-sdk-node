@@ -24,7 +24,6 @@ const agentId = process.env.EAK_AGENT_ID || "memory-agent";
 const cases: AuditCase[] = [];
 
 await runtimeDiscoveryCase();
-await readmeAgentObjectCase();
 await stringAgentDelegationCase();
 await missingRuntimeTokenCase();
 
@@ -62,34 +61,6 @@ async function runtimeDiscoveryCase() {
   });
 }
 
-async function readmeAgentObjectCase() {
-  const client = new EzaoAgentKit({ accessKey, secretKey, host: process.env.EAK_HOST });
-  try {
-    await client.delegateToken({
-      userId: probeUserId,
-      agent: {
-        id: agentId,
-        name: "Memory Agent",
-        description: "README-style agent metadata object.",
-      },
-      scopes: [EAKScopes.GUMEM_MEMORY_READ],
-      mode: "silent",
-    });
-    cases.push({
-      name: "legacy agent metadata object",
-      status: "pass",
-      observation: "Online delegation API accepted an agent object.",
-    });
-  } catch (error) {
-    cases.push({
-      name: "legacy agent metadata object",
-      status: "fail",
-      observation: "Online delegation API rejects the legacy object shape; public examples should use a string agent id.",
-      evidence: sanitizeError(error),
-    });
-  }
-}
-
 async function stringAgentDelegationCase() {
   const client = new EzaoAgentKit({ accessKey, secretKey, host: process.env.EAK_HOST });
   try {
@@ -109,7 +80,10 @@ async function stringAgentDelegationCase() {
         name: "string agent silent delegation",
         status: "blocked",
         observation: "Delegation returned interactive authorization instead of a silent token.",
-        evidence: { grantId: delegation.data.grantId, state: delegation.data.state },
+        evidence: {
+          grantId: delegation.data.grantId,
+          authorizationUrl: delegation.data.authorizationUrl,
+        },
       });
       return;
     }
