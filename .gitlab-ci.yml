@@ -29,7 +29,6 @@ verify:
     - pnpm typecheck
     - pnpm test:ci
     - pnpm build
-    - pnpm typecheck:examples
     - pnpm pack --dry-run
 
 sync_github:

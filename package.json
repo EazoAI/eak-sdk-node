@@ -39,7 +39,6 @@
     "CHANGELOG.md",
     "LICENSE",
     "docs",
-    "examples",
     "skills"
   ],
   "scripts": {
@@ -47,7 +46,6 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:ci": "vitest run --coverage=false",
-    "typecheck:examples": "pnpm build && tsc --noEmit -p tsconfig.examples.json",
     "pack:dry-run": "pnpm build && pnpm pack --dry-run",
     "prepack": "pnpm build"
   },
@@ -66,7 +64,6 @@
   },
   "directories": {
     "doc": "docs",
-    "example": "examples",
     "test": "tests"
   },
   "author": ""

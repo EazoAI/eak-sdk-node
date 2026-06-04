@@ -27,8 +27,6 @@ describe("open-source readiness", () => {
       "CONTRIBUTING.md",
       "SECURITY.md",
       "docs/open-source-readiness.md",
-      "examples/basic-delegation.ts",
-      "tsconfig.examples.json",
     ].forEach(expectFile);
     expectNoFile(".github/workflows/ci.yml");
   });
@@ -48,10 +46,10 @@ describe("open-source readiness", () => {
     expect(pkg.publishConfig).toEqual({ access: "public" });
     expect(pkg.scripts).toMatchObject({
       "test:ci": "vitest run --coverage=false",
-      "typecheck:examples": "pnpm build && tsc --noEmit -p tsconfig.examples.json",
       "pack:dry-run": "pnpm build && pnpm pack --dry-run",
       prepack: "pnpm build",
     });
+    expect(pkg.scripts).not.toHaveProperty("typecheck:examples");
     expect(pkg.files).toEqual([
       "dist",
       "README.md",
@@ -59,23 +57,25 @@ describe("open-source readiness", () => {
       "CHANGELOG.md",
       "LICENSE",
       "docs",
-      "examples",
       "skills",
     ]);
+    expect(pkg.directories).toEqual({
+      doc: "docs",
+      test: "tests",
+    });
   });
 
   it("keeps the published skill instructions aligned with the real skill name and agent shape", () => {
     const readme = readText("README.md");
     const zhReadme = readText("README.zh-CN.md");
     const skill = readText("skills/eak-sdk/SKILL.md");
-    const example = readText("examples/basic-delegation.ts");
 
     expect(readme).toContain("--skill eak-sdk");
     expect(readme).not.toContain("--skill eak\n");
     expect(zhReadme).toContain("--skill eak-sdk");
     expect(zhReadme).not.toContain("--skill eak\n");
 
-    [readme, zhReadme, skill, example].forEach((text) => {
+    [readme, zhReadme, skill].forEach((text) => {
       expect(text).not.toMatch(/agent:\s*\{\s*id:/);
     });
 
@@ -114,5 +114,6 @@ describe("open-source readiness", () => {
     expect(ci).toMatch(/- if: '\$CI_COMMIT_BRANCH'\n\s+when: manual\n\s+allow_failure: true/);
     expect(ci).toContain("npm whoami");
     expect(ci).toContain("npm org ls eazo --json");
+    expect(ci).not.toContain("typecheck:examples");
   });
 });

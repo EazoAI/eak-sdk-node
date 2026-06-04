@@ -8,7 +8,6 @@ Use this checklist before publishing or mirroring `@eazo/eak` as an open SDK.
   namespaces, response shape, errors, security notes, and development commands.
 - `README.zh-CN.md` stays aligned with the English README for the primary SDK
   flow.
-- `examples/basic-delegation.ts` demonstrates the minimum trusted-server flow.
 - `CHANGELOG.md` records public behavior changes.
 - `LICENSE` is included and matches `package.json`.
 
@@ -20,7 +19,6 @@ Use this checklist before publishing or mirroring `@eazo/eak` as an open SDK.
 - CI runs typecheck, tests, build, and package dry-run.
 - `tests/open-source-readiness.test.ts` guards required project files and package
   metadata.
-- `examples/basic-delegation.ts` is typechecked through `tsconfig.examples.json`.
 
 ## Package Surface
 
@@ -35,7 +33,7 @@ Use this checklist before publishing or mirroring `@eazo/eak` as an open SDK.
 - AK/SK must stay server-side.
 - Delegation tokens and product tokens must not be logged or exposed to
   untrusted clients.
-- Examples should use environment variables and placeholders only.
+- Documentation snippets should use environment variables and placeholders only.
 - New product namespaces must document scopes, token audience, and audit fields.
 
 ## Verification
@@ -46,7 +44,6 @@ Run the full local gate before publishing:
 pnpm typecheck
 pnpm test
 pnpm build
-pnpm typecheck:examples
 pnpm pack --dry-run
 git diff --check
 ```
