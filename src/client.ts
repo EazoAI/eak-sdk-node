@@ -33,7 +33,7 @@ import { createWebSearchNamespace } from "./web-search";
 
 const DEFAULT_EAK_HOST = "https://eak.eazo.ai/dashboard";
 
-export class EzaoAgentKit {
+export class EazoAgentKit {
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
   private readonly accessKey: string;
@@ -259,11 +259,14 @@ export class EzaoAgentKit {
       signed?: boolean;
     },
   ): Promise<EAKResponse<T>> {
-    const response = await this.fetchWithTimeout(urlWithQuery(baseUrl, pathname, options.query), {
-      method: options.method,
-      headers: requestHeaders(options),
-      body: requestBody(options.body),
-    });
+    const response = await this.fetchWithTimeout(
+      urlWithBasePath(baseUrl, pathname, options.query),
+      {
+        method: options.method,
+        headers: requestHeaders(options),
+        body: requestBody(options.body),
+      },
+    );
     const payload = await readJson(response);
     if (!response.ok) {
       throw errorFromPayload(
@@ -294,7 +297,7 @@ export class EzaoAgentKit {
     },
   ): AsyncIterable<EAKEvent<T>> {
     const response = await this.fetchWithTimeout(
-      urlWithQuery(baseUrl, pathname, options.query),
+      urlWithBasePath(baseUrl, pathname, options.query),
       {
         method: "GET",
         headers: {
@@ -376,9 +379,10 @@ export class EzaoAgentKit {
     if (explicit) return explicit;
     const runtime = await this.runtimeConfig();
     if (service === "eak") return runtime.eakBaseUrl ?? this.host;
-    if (service === "genauth") return runtime.genauthBaseUrl ?? this.host;
-    if (service === "gumem") return runtime.gumemBaseUrl ?? this.host;
-    return runtime.webAgentBaseUrl ?? this.host;
+    const hostOrigin = originBaseUrl(this.host);
+    if (service === "genauth") return runtime.genauthBaseUrl ?? hostOrigin;
+    if (service === "gumem") return runtime.gumemBaseUrl ?? hostOrigin;
+    return runtime.webAgentBaseUrl ?? hostOrigin;
   }
 
   private explicitBaseUrlFor(service: EAKService): string | undefined {
@@ -507,7 +511,7 @@ export class EzaoAgentKit {
   }
 }
 
-export { EzaoAgentKit as EAK, EzaoAgentKit as EazoAgentKit };
+export { EazoAgentKit as EAK };
 
 interface ResolvedRuntimeConfig {
   eakBaseUrl?: string;
@@ -582,7 +586,12 @@ function urlWithQuery(baseUrl: string, pathname: string, query?: JsonObject): UR
 function urlWithBasePath(baseUrl: string, pathname: string, query?: JsonObject): URL {
   const base = new URL(baseUrl);
   const basePath = base.pathname === "/" ? "" : base.pathname.replace(/\/+$/, "");
-  return urlWithQuery(base.origin, `${basePath}${normalizePath(pathname)}`, query);
+  const normalizedPath = normalizePath(pathname);
+  const fullPath =
+    basePath && (normalizedPath === basePath || normalizedPath.startsWith(`${basePath}/`))
+      ? normalizedPath
+      : `${basePath}${normalizedPath}`;
+  return urlWithQuery(base.origin, fullPath, query);
 }
 
 function resolveLocalGenauthRequest(input: URL): { url: URL; hostHeader?: string } {
@@ -616,6 +625,10 @@ function normalizePath(path: string): string {
 function normalizeBaseUrl(host: string): string {
   const withProtocol = /^https?:\/\//i.test(host) ? host : `https://${host}`;
   return withProtocol.replace(/\/+$/, "");
+}
+
+function originBaseUrl(host: string): string {
+  return new URL(host).origin;
 }
 
 function normalizeRuntimeConfig(payload: unknown): ResolvedRuntimeConfig {

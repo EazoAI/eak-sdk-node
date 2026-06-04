@@ -6,9 +6,9 @@ import {
   EAKScopes,
   EAKScopeBundles,
   EazoAgentKit,
-  EzaoAgentKit,
   buildStringToSign,
 } from "../src";
+import * as sdk from "../src";
 
 function jwt(payload: Record<string, unknown>): string {
   const encode = (value: unknown) =>
@@ -30,17 +30,16 @@ function sseResponse(body: string): Response {
   });
 }
 
-describe("EzaoAgentKit", () => {
-  it("keeps EzaoAgentKit as the public constructor and EAK/EazoAgentKit as compatibility aliases", () => {
-    expect(EzaoAgentKit.name).toBe("EzaoAgentKit");
-    expect(EAK).toBe(EzaoAgentKit);
-    expect(EazoAgentKit).toBe(EzaoAgentKit);
-    expect(EzaoAgentKit).toBe(EazoAgentKit);
+describe("EazoAgentKit", () => {
+  it("keeps EazoAgentKit as the public constructor and EAK as its alias", () => {
+    expect(EazoAgentKit.name).toBe("EazoAgentKit");
+    expect(EAK).toBe(EazoAgentKit);
+    expect("EzaoAgentKit" in sdk).toBe(false);
   });
 
   it("signs delegateToken requests with accessKey/secretKey and returns token", async () => {
     const seen: { url?: string; init?: RequestInit; body?: unknown } = {};
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -85,7 +84,7 @@ describe("EzaoAgentKit", () => {
 
   it("can initialize with only EAK AK/SK and exposes currentUser at the top level", async () => {
     const seen: { url?: string; init?: RequestInit } = {};
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
@@ -112,7 +111,7 @@ describe("EzaoAgentKit", () => {
 
   it("uses the dashboard base path for default runtime discovery", async () => {
     const calls: string[] = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       fetch: (async (url: URL | RequestInfo) => {
@@ -149,8 +148,48 @@ describe("EzaoAgentKit", () => {
     ]);
   });
 
+  it("preserves base paths returned by runtime config for signed JSON requests", async () => {
+    const calls: string[] = [];
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com/dashboard",
+      fetch: (async (url: URL | RequestInfo) => {
+        calls.push(String(url));
+        if (String(url) === "https://eak.example.com/dashboard/api/v3/eak/runtime-config") {
+          return jsonResponse({
+            data: {
+              eakBaseUrl: "https://eak-runtime.example.com/sdk",
+            },
+          });
+        }
+        return jsonResponse({
+          data: {
+            token: "token",
+            tokenType: "Bearer",
+            expiresIn: 3600,
+            grantId: "grant",
+            auditId: "audit",
+          },
+        });
+      }) as typeof fetch,
+    });
+
+    await client.delegateToken({
+      userId: "user_1",
+      agent: "support-assistant",
+      scopes: ["gumem.memory:read"],
+      mode: "silent",
+    });
+
+    expect(calls).toEqual([
+      "https://eak.example.com/dashboard/api/v3/eak/runtime-config",
+      "https://eak-runtime.example.com/sdk/api/v3/eak/delegations",
+    ]);
+  });
+
   it("exposes delegateToken through the EAK namespace", async () => {
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -181,7 +220,7 @@ describe("EzaoAgentKit", () => {
 
   it("creates interactive delegateToken grants without user or userId", async () => {
     const seen: { url?: string; init?: RequestInit; body?: unknown } = {};
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -231,7 +270,7 @@ describe("EzaoAgentKit", () => {
   });
 
   it("normalizes interactive delegateToken state into grantState and state", async () => {
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -264,7 +303,7 @@ describe("EzaoAgentKit", () => {
   });
 
   it("falls back interactive delegateToken state fields to grantId when upstream omits state", async () => {
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -295,7 +334,7 @@ describe("EzaoAgentKit", () => {
   });
 
   it("returns mode-specific delegateToken result types", async () => {
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -363,7 +402,7 @@ describe("EzaoAgentKit", () => {
   });
 
   it("treats GenAuth statusCode error envelopes as SDK errors", async () => {
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -390,7 +429,7 @@ describe("EzaoAgentKit", () => {
   });
 
   it("preserves GenAuth apiCode fields from statusCode error envelopes", async () => {
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -421,7 +460,7 @@ describe("EzaoAgentKit", () => {
 
   it("keeps delegateAgent and completeDelegateAgent as deprecated compatibility aliases", async () => {
     const seen: { bodies: unknown[] } = { bodies: [] };
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -465,7 +504,7 @@ describe("EzaoAgentKit", () => {
 
   it("exposes completeDelegateToken as the recommended callback helper", async () => {
     const calls: Array<{ url: string; body: unknown }> = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -522,7 +561,7 @@ describe("EzaoAgentKit", () => {
 
   it("exposes GenAuth helpers through the EAK gateway host", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -552,7 +591,7 @@ describe("EzaoAgentKit", () => {
 
   it("exchanges AK/SK for a GenAuth admin token before listing users", async () => {
     const calls: Array<{ url: string; init?: RequestInit; body?: unknown }> = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -597,7 +636,7 @@ describe("EzaoAgentKit", () => {
 
   it("maps GenAuth user CRUD helpers to v3 management endpoints", async () => {
     const calls: Array<{ url: string; init?: RequestInit; body?: unknown }> = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -645,7 +684,7 @@ describe("EzaoAgentKit", () => {
 
   it("caches one GenAuth management token for all user management helpers", async () => {
     const calls: string[] = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -677,7 +716,7 @@ describe("EzaoAgentKit", () => {
 
   it("exposes EAK workspace and AK/SK management helpers without sending agent allowlists", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -712,7 +751,7 @@ describe("EzaoAgentKit", () => {
   it("discovers runtime service URLs from the configured host and routes calls to returned services", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://console.example.com",
@@ -778,7 +817,7 @@ describe("EzaoAgentKit", () => {
       product_resource: { type: "gumem_project", id: "proj_1" },
     });
     const calls: Array<{ url: string; init?: RequestInit; body?: unknown }> = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -832,7 +871,7 @@ describe("EzaoAgentKit", () => {
       aud: "genauth:token-exchange",
       eak_tenant_id: "eak_tnt_1",
     });
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -869,7 +908,7 @@ describe("EzaoAgentKit", () => {
   it("sends product access tokens directly to Gumem", async () => {
     const token = jwt({ aud: "gumem" });
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -892,7 +931,7 @@ describe("EzaoAgentKit", () => {
     const delegationToken = jwt({ token_type: "eak_delegation_token" });
     const productToken = jwt({ aud: "gumem" });
     const calls: Array<{ url: string; init?: RequestInit; body?: unknown }> = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "http://core.genauth.localhost:3000",
@@ -922,7 +961,7 @@ describe("EzaoAgentKit", () => {
   });
 
   it("requires product capability calls to receive an explicit token", async () => {
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       gumemBaseUrl: "https://gumem.example.com/api",
@@ -944,7 +983,7 @@ describe("EzaoAgentKit", () => {
       resource_bindings: { webagent: { tenant_id: "web_tnt_1" } },
     });
     const calls: Array<{ url: string; init?: RequestInit; body?: unknown }> = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -1004,7 +1043,7 @@ describe("EzaoAgentKit", () => {
   it("uses webagent_tenant_id from token for WebAgent calls", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const seen: { url?: string; init?: RequestInit } = {};
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -1033,7 +1072,7 @@ describe("EzaoAgentKit", () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const urls: string[] = [];
     const bodies: unknown[] = [];
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -1068,7 +1107,7 @@ describe("EzaoAgentKit", () => {
   it("maps webSearch query sugar to the backend queries contract", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const seen: { body?: unknown } = {};
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -1095,13 +1134,14 @@ describe("EzaoAgentKit", () => {
 
   it("parses SSE events including JSON, text, and last-event-id", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
-    const seen: { headers?: Record<string, string> } = {};
-    const client = new EzaoAgentKit({
+    const seen: { headers?: Record<string, string>; url?: string } = {};
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
-      webAgentBaseUrl: "https://eak.example.com",
-      fetch: (async (_url: URL | RequestInfo, init?: RequestInit) => {
+      webAgentBaseUrl: "https://eak.example.com/workspace",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        seen.url = String(url);
         seen.headers = init?.headers as Record<string, string>;
         return sseResponse(
           'id: 1\nevent: browser_video_frame\ndata: {"frame":"https://frame"}\n\nid: 2\nevent: final\ndata: done\n\n',
@@ -1119,6 +1159,9 @@ describe("EzaoAgentKit", () => {
       events.push(event);
     }
 
+    expect(seen.url).toBe(
+      "https://eak.example.com/workspace/api/v1/projects/tenant_1/do_anything/sessions/sess_1/runs/run_1/events",
+    );
     expect(seen.headers?.["last-event-id"]).toBe("0");
     expect(events).toEqual([
       { id: "1", event: "browser_video_frame", data: { frame: "https://frame" } },
@@ -1127,7 +1170,7 @@ describe("EzaoAgentKit", () => {
   });
 
   it("maps permission errors to typed SDK errors", async () => {
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -1160,7 +1203,7 @@ describe("EzaoAgentKit", () => {
 
   it("supports unstable raw requests through EAK host without exposing service selection", async () => {
     const seen: { url?: string; init?: RequestInit } = {};
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -1187,7 +1230,7 @@ describe("EzaoAgentKit", () => {
 
   it("accepts camelCase GUMem input while sending the existing backend field names", async () => {
     const seen: { body?: unknown } = {};
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",
@@ -1210,7 +1253,7 @@ describe("EzaoAgentKit", () => {
   it("maps instruction sugar to the backend DoAnything instructions contract", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const seen: { body?: unknown } = {};
-    const client = new EzaoAgentKit({
+    const client = new EazoAgentKit({
       accessKey: "ak_test",
       secretKey: "sk_test",
       host: "https://eak.example.com",

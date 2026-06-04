@@ -20,9 +20,8 @@ The package requires Node.js 18 or later and uses pnpm.
 
 - Keep EAK AK/SK and delegation tokens out of browser, mobile, and public CLI
   runtimes.
-- Preserve `EzaoAgentKit` as the primary constructor.
-- Keep `EAK` and `EazoAgentKit` aliases compatible unless a major version
-  removes them.
+- Preserve `EazoAgentKit` as the primary constructor.
+- Keep `EAK` compatible as the short constructor alias.
 - Prefer `delegateToken` in new examples and docs.
 - Treat `delegateAgent` and `completeDelegateAgent` as compatibility APIs.
 - Keep `host` as the EAK Console or SDK gateway address; product services are

@@ -14,7 +14,7 @@ AK/SK 必须只保存在可信服务端，不能下发到浏览器、移动端�
 
 EAK 把 Agent 授权模型收敛成几个稳定边界：
 
-- 一个 SDK 入口：`new EzaoAgentKit({ accessKey, secretKey })`。
+- 一个 SDK 入口：`new EazoAgentKit({ accessKey, secretKey })`。
 - 一条发现路径：`host` 可在私有化或本地部署中覆盖 EAK Console/SDK 网关，SDK 通过 `/api/v3/eak/runtime-config` 获取 GenAuth、GUMem、WebAgent 等运行时地址。
 - 一个授权入口：调用 `delegateToken`；silent 模式直接返回 `data.token`，interactive 模式返回授权 URL，之后由业务服务端完成兑换。
 - 一条管理面路径：调用 `genauth.users.*`，SDK 会先用 AK/SK 换取 GenAuth management token，再调用 GenAuth v3 users API。
@@ -66,9 +66,9 @@ npm 包中包含 `skills/` 目录，但推荐仍使用上面的 GitHub 仓库安
 先在可信服务端初始化 SDK。AK/SK 只留在服务端，管理面调用和运行时产品委托都复用这一个 SDK 实例。
 
 ```ts
-import { EzaoAgentKit, EAKEventTypes, EAKScopeBundles, EAKScopes } from "@eazo/eak";
+import { EazoAgentKit, EAKEventTypes, EAKScopeBundles, EAKScopes } from "@eazo/eak";
 
-const eak = new EzaoAgentKit({
+const eak = new EazoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
   secretKey: process.env.EAK_SECRET_KEY!,
 });
@@ -372,7 +372,7 @@ await eak.track.runNow({
 ### GenAuth 用户上下文与用户管理
 
 ```ts
-const client = new EzaoAgentKit({
+const client = new EazoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
   secretKey: process.env.EAK_SECRET_KEY!,
 });
@@ -399,7 +399,7 @@ const created = await client.genauth.users.create({
 ### Client
 
 ```ts
-const eak = new EzaoAgentKit({
+const eak = new EazoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
   secretKey: process.env.EAK_SECRET_KEY!,
   timeoutMs: 30_000,
@@ -417,7 +417,7 @@ const eak = new EzaoAgentKit({
 兼容导出：
 
 ```ts
-import { EAK, EazoAgentKit, EzaoAgentKit } from "@eazo/eak";
+import { EAK, EazoAgentKit } from "@eazo/eak";
 ```
 
 ### 命名空间

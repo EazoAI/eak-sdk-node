@@ -1,5 +1,5 @@
 export { buildAuthorization, buildSignature, buildStringToSign } from "./signature";
-export { EAK, EazoAgentKit, EzaoAgentKit } from "./client";
+export { EAK, EazoAgentKit } from "./client";
 export {
   EAKAuthError,
   EAKDelegationRequiredError,

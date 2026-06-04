@@ -12,7 +12,7 @@ Initial public release of `@eazo/eak`.
 
 ### What ships
 
-- Server-side `EzaoAgentKit` constructor for EAK Agent delegation and product
+- Server-side `EazoAgentKit` constructor for EAK Agent delegation and product
   runtime calls.
 - Runtime service discovery from the EAK Console gateway through
   `GET /api/v3/eak/runtime-config`.
@@ -31,7 +31,7 @@ Initial public release of `@eazo/eak`.
 
 ### Compatibility
 
-- `EAK` and `EazoAgentKit` remain available as constructor aliases.
+- `EAK` remains available as a short constructor alias.
 - `delegateAgent` and `completeDelegateAgent` remain available as deprecated
   aliases for older integrations, but new integrations should use
   `delegateToken`.

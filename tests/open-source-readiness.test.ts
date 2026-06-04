@@ -100,6 +100,11 @@ describe("open-source readiness", () => {
     expect(skill).toContain("grant_type is not enabled");
     expect(skill).toContain("genauth.users.*");
     expect(skill).toContain("/api/v3/eak/genauth/admin-token");
+
+    [readme, zhReadme, skill].forEach((text) => {
+      expect(text).toContain("EazoAgentKit");
+      expect(text).not.toContain("EzaoAgentKit");
+    });
   });
 
   it("allows manual branch release jobs while keeping branch sync optional", () => {

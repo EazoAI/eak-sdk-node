@@ -19,7 +19,7 @@ Agents that perform real work need more than a backend API key. They need a user
 
 EAK keeps that model small:
 
-- One SDK entry: `new EzaoAgentKit({ accessKey, secretKey })`.
+- One SDK entry: `new EazoAgentKit({ accessKey, secretKey })`.
 - One discovery path: `host` can override the EAK Console/SDK gateway for private or local deployments, and the SDK reads downstream runtime URLs from `/api/v3/eak/runtime-config`.
 - One delegation entry: call `delegateToken`; silent mode returns `data.token`, while interactive mode returns an authorization URL and later completes on your server.
 - One management path: call `genauth.users.*`, and the SDK exchanges AK/SK for a GenAuth management token before calling GenAuth v3 users APIs.
@@ -71,9 +71,9 @@ The npm package includes the `skills/` directory, but the recommended Skill inst
 Start with a server-side SDK instance. AK/SK stays on your trusted server for both management-plane calls and runtime product delegation.
 
 ```ts
-import { EzaoAgentKit, EAKEventTypes, EAKScopeBundles, EAKScopes } from "@eazo/eak";
+import { EazoAgentKit, EAKEventTypes, EAKScopeBundles, EAKScopes } from "@eazo/eak";
 
-const eak = new EzaoAgentKit({
+const eak = new EazoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
   secretKey: process.env.EAK_SECRET_KEY!,
 });
@@ -375,7 +375,7 @@ await eak.track.runNow({
 ### GenAuth User Context and Management
 
 ```ts
-const client = new EzaoAgentKit({
+const client = new EazoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
   secretKey: process.env.EAK_SECRET_KEY!,
 });
@@ -402,7 +402,7 @@ const created = await client.genauth.users.create({
 ### Client
 
 ```ts
-const eak = new EzaoAgentKit({
+const eak = new EazoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
   secretKey: process.env.EAK_SECRET_KEY!,
   timeoutMs: 30_000,
@@ -417,10 +417,10 @@ const eak = new EzaoAgentKit({
 | `fetch` | `typeof fetch` | No | Custom transport implementation. |
 | `timeoutMs` | `number` | No | Request timeout. Defaults to `30000`. |
 
-Compatibility aliases are exported for older callers:
+`EAK` is also exported as a short alias:
 
 ```ts
-import { EAK, EazoAgentKit, EzaoAgentKit } from "@eazo/eak";
+import { EAK, EazoAgentKit } from "@eazo/eak";
 ```
 
 ### Namespaces
