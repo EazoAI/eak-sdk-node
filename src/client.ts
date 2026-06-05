@@ -393,11 +393,23 @@ export class EazoAgentKit {
     if (service === "genauth" && this.options.genauthBaseUrl) {
       return normalizeBaseUrl(this.options.genauthBaseUrl);
     }
+    if (service === "genauth") {
+      const value = serviceHostOption(this.options, "genauth");
+      return value ? normalizeBaseUrl(value) : undefined;
+    }
     if (service === "gumem" && this.options.gumemBaseUrl) {
       return normalizeBaseUrl(this.options.gumemBaseUrl);
     }
+    if (service === "gumem") {
+      const value = serviceHostOption(this.options, "gumem");
+      return value ? normalizeBaseUrl(value) : undefined;
+    }
     if (service === "webagent" && this.options.webAgentBaseUrl) {
       return normalizeBaseUrl(this.options.webAgentBaseUrl);
+    }
+    if (service === "webagent") {
+      const value = serviceHostOption(this.options, "webagent");
+      return value ? normalizeBaseUrl(value) : undefined;
     }
     return undefined;
   }
@@ -629,6 +641,19 @@ function normalizeBaseUrl(host: string): string {
 
 function originBaseUrl(host: string): string {
   return new URL(host).origin;
+}
+
+function serviceHostOption(
+  options: EAKOptions,
+  service: Exclude<EAKService, "eak">,
+): string | undefined {
+  if (service === "genauth") {
+    return options.genauthHost;
+  }
+  if (service === "gumem") {
+    return options.gumemHost;
+  }
+  return options.webAgentHost;
 }
 
 function normalizeRuntimeConfig(payload: unknown): ResolvedRuntimeConfig {

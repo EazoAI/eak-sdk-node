@@ -8,6 +8,7 @@ import {
   EazoAgentKit,
   buildStringToSign,
 } from "../src";
+import type { EAKOptions } from "../src";
 import * as sdk from "../src";
 
 function jwt(payload: Record<string, unknown>): string {
@@ -804,6 +805,86 @@ describe("EazoAgentKit", () => {
     expect((calls[1].init?.headers as Record<string, string>)["x-authing-date"]).toEqual(
       expect.any(String),
     );
+  });
+
+  it("uses configured service hosts instead of runtime-config service URLs", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://console.example.com",
+      genauthHost: "https://configured.genauth.example.com",
+      gumemHost: "https://configured.gumem.example.com/api",
+      webAgentHost: "https://configured.webagent.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        calls.push({ url: String(url), init });
+        if (String(url) === "https://console.example.com/api/v3/eak/runtime-config") {
+          return jsonResponse({
+            data: {
+              eakBaseUrl: "https://eak-runtime.example.com",
+              genauthBaseUrl: "https://runtime.genauth.example.com",
+              gumemBaseUrl: "https://runtime.gumem.example.com/api",
+              webAgentBaseUrl: "https://runtime.webagent.example.com",
+            },
+          });
+        }
+        if (String(url) === "https://eak-runtime.example.com/api/v3/eak/delegations") {
+          return jsonResponse({
+            data: {
+              mode: "silent",
+              tokenType: "Bearer",
+              delegateAgentToken: token,
+              expiresIn: 3600,
+              grantId: "grant",
+              auditId: "audit",
+            },
+          });
+        }
+        return jsonResponse({ data: { ok: true } });
+      }) as typeof fetch,
+    });
+
+    await client.delegateToken({
+      user: { id: "user_1" },
+      agent: "do_anything",
+      scopes: [EAKScopes.GUMEM_MEMORY_READ],
+      mode: "silent",
+    });
+    await client.currentUser({ accessToken: "genauth-access-token" });
+    await client.gumem.recall({
+      token: jwt({ aud: "gumem" }),
+      sessionId: "default",
+      query: "memory",
+    });
+    await client.doAnything.createSession({ token });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://console.example.com/api/v3/eak/runtime-config",
+      "https://eak-runtime.example.com/api/v3/eak/delegations",
+      "https://configured.genauth.example.com/oidc/me",
+      "https://configured.gumem.example.com/api/sessions/default/context?query=memory&details=false",
+      "https://configured.webagent.example.com/api/v1/projects/tenant_1/do_anything/sessions",
+    ]);
+  });
+
+  it("types service host overrides with a single camelCase spelling", () => {
+    const options = {
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      genauthHost: "https://configured.genauth.example.com",
+      gumemHost: "https://configured.gumem.example.com/api",
+      webAgentHost: "https://configured.webagent.example.com",
+    } satisfies EAKOptions;
+
+    expect(options.webAgentHost).toBe("https://configured.webagent.example.com");
+
+    ({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      // @ts-expect-error service host overrides use camelCase names.
+      GenauthHost: "https://configured.genauth.example.com",
+    } satisfies EAKOptions);
   });
 
   it("exchanges EAK delegation tokens before calling Gumem", async () => {

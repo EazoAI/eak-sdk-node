@@ -10,6 +10,12 @@ export interface EAKOptions {
   accessKey?: string;
   secretKey?: string;
   host?: string;
+  /** Overrides the GenAuth URL returned by runtime-config. Prefer host for normal discovery. */
+  genauthHost?: string;
+  /** Overrides the GUMem URL returned by runtime-config. Prefer host for normal discovery. */
+  gumemHost?: string;
+  /** Overrides the WebAgent URL returned by runtime-config. Prefer host for normal discovery. */
+  webAgentHost?: string;
   /** @deprecated Use accessKey. */
   accessKeyId?: string;
   /** @deprecated Use secretKey. */
