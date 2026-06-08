@@ -1110,15 +1110,84 @@ describe("EazoAgentKit", () => {
   it("exports stable scope and event constants", () => {
     expect(EAKScopes.GUMEM_MEMORY_READ).toBe("gumem.memory:read");
     expect("GENAUTH_USER_LIST" in EAKScopes).toBe(false);
-    expect(EAKScopes.WEBAGENT_DO_ANYTHING_EVENTS).toBe("webagent.do_anything:events");
+    expect(EAKScopes.DO_ANYTHING_RUN).toBe("webagent.do_anything:run");
+    expect(EAKScopes.DO_ANYTHING_READ).toBe("webagent.do_anything:read");
+    expect(EAKScopes.DO_ANYTHING_STOP).toBe("webagent.do_anything:stop");
+    expect(EAKScopes.DO_ANYTHING_CONTROL).toBe("webagent.do_anything:control");
+    expect(EAKScopes.WEB_SEARCH_STOP).toBe("webagent.web_search:stop");
+    expect(EAKScopes.DEEP_RESEARCH_CONTROL).toBe("webagent.deep_research:control");
+    expect(EAKScopes.TRACK_MANAGE).toBe("webagent.track:manage");
+    expect("WEBAGENT_TASK_RUN" in EAKScopes).toBe(false);
+    expect("WEBAGENT_DO_ANYTHING_EVENTS" in EAKScopes).toBe(false);
     expect(EAKScopeBundles.GUMEM_SESSION_RECALL).toEqual([
       EAKScopes.GUMEM_MEMORY_READ,
       EAKScopes.GUMEM_MEMORY_WRITE,
       EAKScopes.GUMEM_MESSAGE_WRITE,
     ]);
     expect("GENAUTH_USER_ADMIN" in EAKScopeBundles).toBe(false);
-    expect(EAKScopeBundles.AGENT_DO_ANYTHING_BASIC).toContain(EAKScopes.WEBAGENT_DO_ANYTHING_RUN);
+    expect(EAKScopeBundles.AGENT_DO_ANYTHING_BASIC).toEqual([
+      EAKScopes.DO_ANYTHING_RUN,
+      EAKScopes.DO_ANYTHING_READ,
+      EAKScopes.DO_ANYTHING_STOP,
+      EAKScopes.DO_ANYTHING_CONTROL,
+    ]);
     expect(EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME).toBe("browser_video_frame");
+  });
+
+  it("uses canonical WebAgent scopes when exchanging delegation tokens", async () => {
+    const delegationToken = jwt({
+      token_type: "eak_delegation_token",
+      aud: "genauth:token-exchange",
+      eak_tenant_id: "eak_tnt_1",
+    });
+    const productToken = jwt({
+      aud: "webagent",
+      product_resource: { type: "webagent_tenant", id: "web_tnt_1" },
+    });
+    const exchanges: unknown[] = [];
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      webAgentBaseUrl: "https://webagent.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        if (String(url) === "https://eak.example.com/api/v3/eak/token-exchange") {
+          exchanges.push(JSON.parse(String(init?.body)));
+          return jsonResponse({
+            data: { accessToken: productToken, expiresIn: 3600 },
+          });
+        }
+        return jsonResponse({ data: { id: "ok" } });
+      }) as typeof fetch,
+    });
+
+    await client.doAnything.createRun({ token: delegationToken, sessionId: "sess_1", instruction: "open docs" });
+    await client.doAnything.getRun({ token: delegationToken, sessionId: "sess_1", runId: "run_1" });
+    await client.doAnything.cancel({ token: delegationToken, sessionId: "sess_1", runId: "run_1" });
+    await client.doAnything.intervene({ token: delegationToken, sessionId: "sess_1", runId: "run_1", text: "continue" });
+    await client.webSearch.run({ token: delegationToken, query: "EAK" });
+    await client.webSearch.get({ token: delegationToken, runId: "search_1" });
+    await client.webSearch.cancel({ token: delegationToken, runId: "search_1" });
+    await client.track.createMonitor({ token: delegationToken, url: "https://example.com" });
+    await client.track.getMonitor({ token: delegationToken, monitorId: "monitor_1" });
+    await client.track.runNow({ token: delegationToken, monitorId: "monitor_1" });
+    await client.track.deleteMonitor({ token: delegationToken, monitorId: "monitor_1" });
+    await client.track.updateMonitor({ token: delegationToken, monitorId: "monitor_1", title: "updated" });
+
+    expect(exchanges).toEqual([
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.do_anything:run"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.do_anything:read"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.do_anything:stop"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.do_anything:control"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:run"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:read"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:stop"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:manage"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:read"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:run"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:stop"] },
+    ]);
   });
 
   it("uses webagent_tenant_id from token for WebAgent calls", async () => {

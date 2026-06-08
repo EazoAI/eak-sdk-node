@@ -5,7 +5,7 @@ export function createWebSearchNamespace(transport: EAKTransport) {
     run: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/web_search/runs", input.token, {
         body: normalizeWebSearchRunInput(omit(input, "token")),
-        requiredScopes: ["webagent.task:run"],
+        requiredScopes: ["webagent.web_search:run"],
       }),
 
     get: <T = unknown>(input: RuntimeTokenInput & { runId: string }): Promise<EAKResponse<T>> =>
@@ -14,7 +14,7 @@ export function createWebSearchNamespace(transport: EAKTransport) {
         `/web_search/runs/${encodeURIComponent(input.runId)}`,
         input.token,
         {
-          requiredScopes: ["webagent.task:read"],
+          requiredScopes: ["webagent.web_search:read"],
         },
       ),
 
@@ -27,7 +27,7 @@ export function createWebSearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: omit(input, "token", "runId"),
-          requiredScopes: ["webagent.task:run"],
+          requiredScopes: ["webagent.web_search:run"],
         },
       ),
 
@@ -39,7 +39,7 @@ export function createWebSearchNamespace(transport: EAKTransport) {
         input.token,
         {
           lastEventId: input.lastEventId,
-          requiredScopes: ["webagent.task:read"],
+          requiredScopes: ["webagent.web_search:read"],
           signal: input.signal,
         },
       ),
@@ -53,7 +53,7 @@ export function createWebSearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: omit(input, "token", "runId"),
-          requiredScopes: ["webagent.task:run"],
+          requiredScopes: ["webagent.web_search:stop"],
         },
       ),
   };

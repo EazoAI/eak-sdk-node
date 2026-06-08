@@ -119,11 +119,10 @@ const delegation = await eak.delegateToken({
   agent: "sales-assistant",
   scopes: [
     ...EAKScopeBundles.GUMEM_SESSION_RECALL,
-    EAKScopes.WEBAGENT_WEB_SEARCH_RUN,
-    EAKScopes.WEBAGENT_WEB_SEARCH_READ,
-    EAKScopes.WEBAGENT_DO_ANYTHING_SESSION,
-    EAKScopes.WEBAGENT_DO_ANYTHING_RUN,
-    EAKScopes.WEBAGENT_DO_ANYTHING_EVENTS,
+    EAKScopes.WEB_SEARCH_RUN,
+    EAKScopes.WEB_SEARCH_READ,
+    EAKScopes.DO_ANYTHING_RUN,
+    EAKScopes.DO_ANYTHING_READ,
   ],
   mode: "silent",
 });
@@ -254,8 +253,8 @@ await eak.gumem.recall({
 | 创建 GUMem 会话并召回上下文 | `gumem.memory:read`, `gumem.memory:write`, `gumem.message:write` | Agent 可以为当前用户创建记忆会话、写入消息并召回上下文。 |
 | 写入任务结果 | `gumem.message:write`, `gumem.action:write` | Agent 可以把本次确认过的结果写回 GUMem。 |
 | 搜索公开网页 | `webagent.web_search:run`, `webagent.web_search:read` | Agent 可以搜索公开网页并读取结果。 |
-| 执行网页任务 | `webagent.do_anything:session`, `webagent.do_anything:run`, `webagent.do_anything:events` | Agent 可以执行一次有边界的网页任务，并展示执行过程。 |
-| 创建长期监控 | `webagent.track:monitor_create`, `webagent.track:events` | Agent 可以按规则监控指定页面变化。 |
+| 执行网页任务 | `webagent.do_anything:run`, `webagent.do_anything:read`, `webagent.do_anything:stop`, `webagent.do_anything:control` | Agent 可以执行有边界的网页任务、读取进度、停止任务，并在需要时介入控制。 |
+| 创建长期监控 | `webagent.track:manage`, `webagent.track:read`, `webagent.track:run`, `webagent.track:stop` | Agent 可以配置监控、读取事件、立即运行检查，并停止监控。 |
 
 低风险能力通常可以静默授权，例如读取当前用户自己的 GUMem、写入本次会话摘要、搜索公开网页、读取普通任务结果。
 

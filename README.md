@@ -124,11 +124,10 @@ const delegation = await eak.delegateToken({
   agent: "sales-assistant",
   scopes: [
     ...EAKScopeBundles.GUMEM_SESSION_RECALL,
-    EAKScopes.WEBAGENT_WEB_SEARCH_RUN,
-    EAKScopes.WEBAGENT_WEB_SEARCH_READ,
-    EAKScopes.WEBAGENT_DO_ANYTHING_SESSION,
-    EAKScopes.WEBAGENT_DO_ANYTHING_RUN,
-    EAKScopes.WEBAGENT_DO_ANYTHING_EVENTS,
+    EAKScopes.WEB_SEARCH_RUN,
+    EAKScopes.WEB_SEARCH_READ,
+    EAKScopes.DO_ANYTHING_RUN,
+    EAKScopes.DO_ANYTHING_READ,
   ],
   mode: "silent",
 });
@@ -257,8 +256,8 @@ Use explicit scope strings so the requested permission boundary is visible in co
 | Create a GUMem session and recall context | `gumem.memory:read`, `gumem.memory:write`, `gumem.message:write` | Agent can create a memory session, write messages, and recall context for the current user. |
 | Write task results | `gumem.message:write`, `gumem.action:write` | Agent can write this task's confirmed result back to GUMem. |
 | Search public web | `webagent.web_search:run`, `webagent.web_search:read` | Agent can search public pages and read search results. |
-| Run a bounded web task | `webagent.do_anything:session`, `webagent.do_anything:run`, `webagent.do_anything:events` | Agent can run a visible web task and stream progress. |
-| Create a monitor | `webagent.track:monitor_create`, `webagent.track:events` | Agent can monitor configured pages and emit changes. |
+| Run a bounded web task | `webagent.do_anything:run`, `webagent.do_anything:read`, `webagent.do_anything:stop`, `webagent.do_anything:control` | Agent can run a visible web task, read progress, stop it, and intervene when needed. |
+| Create a monitor | `webagent.track:manage`, `webagent.track:read`, `webagent.track:run`, `webagent.track:stop` | Agent can configure monitors, read events, run checks, and stop monitors. |
 
 Silent mode is usually appropriate for low-risk actions such as reading current-user memory, writing a confirmed summary, or searching public web pages.
 

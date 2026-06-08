@@ -36,7 +36,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
     createSession: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/do_anything/sessions", input.token, {
         body: omit(input, "token"),
-        requiredScopes: ["webagent.task:run"],
+        requiredScopes: ["webagent.do_anything:run"],
       }),
 
     createRun: <T = unknown>(
@@ -48,7 +48,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         input.token,
         {
           body: normalizeDoAnythingRunInput(omit(input, "token", "sessionId")),
-          requiredScopes: ["webagent.task:run"],
+          requiredScopes: ["webagent.do_anything:run"],
         },
       ),
 
@@ -60,7 +60,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}`,
         input.token,
         {
-          requiredScopes: ["webagent.task:read"],
+          requiredScopes: ["webagent.do_anything:read"],
         },
       ),
 
@@ -77,7 +77,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         : `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/events`;
       return transport.webAgentSSE(path, input.token, {
         lastEventId: input.lastEventId,
-        requiredScopes: ["webagent.task:read"],
+        requiredScopes: ["webagent.do_anything:read"],
         signal: input.signal,
       });
     },
@@ -91,7 +91,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         input.token,
         {
           body: omit(input, "token", "sessionId", "runId"),
-          requiredScopes: ["webagent.task:run"],
+          requiredScopes: ["webagent.do_anything:control"],
         },
       ),
 
@@ -104,7 +104,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         input.token,
         {
           body: omit(input, "token", "sessionId", "runId"),
-          requiredScopes: ["webagent.task:run"],
+          requiredScopes: ["webagent.do_anything:stop"],
         },
       ),
 
@@ -116,7 +116,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/artifacts/${encodeURIComponent(input.artifactId)}`,
         input.token,
         {
-          requiredScopes: ["webagent.task:read"],
+          requiredScopes: ["webagent.do_anything:read"],
         },
       ),
 
@@ -128,7 +128,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/recording`,
         input.token,
         {
-          requiredScopes: ["webagent.task:read"],
+          requiredScopes: ["webagent.do_anything:read"],
         },
       ),
   };
