@@ -66,7 +66,9 @@ export function createTrackNamespace(transport: EAKTransport) {
         `/track/monitors/${encodeURIComponent(input.monitorId)}`,
         input.token,
         {
-          requiredScopes: ["webagent.track:stop"],
+          // Backend DELETE /track/monitors/{id} requires track:manage
+          // (see api/v1/track/monitors.py:delete_monitor).
+          requiredScopes: ["webagent.track:manage"],
         },
       ),
   };
