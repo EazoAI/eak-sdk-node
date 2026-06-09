@@ -1218,6 +1218,57 @@ describe("EazoAgentKit", () => {
     expect(JSON.parse(String(seen.init?.body))).toEqual({ instructions: "open the site" });
   });
 
+  it("posts doAnything.intervene to the backend /interventions route", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const seen: { url?: string; init?: RequestInit } = {};
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        seen.url = String(url);
+        seen.init = init;
+        return jsonResponse({ data: { ok: true } });
+      }) as typeof fetch,
+    });
+
+    await client.doAnything.intervene({
+      token,
+      sessionId: "sess_1",
+      runId: "run_1",
+      message: "please confirm",
+    });
+
+    expect(seen.url).toBe(
+      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions/sess_1/runs/run_1/interventions",
+    );
+    expect(seen.init?.method).toBe("POST");
+  });
+
+  it("reads doAnything artifacts from the session-scoped /sessions/{id}/artifacts/{id} route", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const seen: { url?: string; init?: RequestInit } = {};
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        seen.url = String(url);
+        seen.init = init;
+        return jsonResponse({ data: { id: "artifact_1" } });
+      }) as typeof fetch,
+    });
+
+    await client.doAnything.readArtifacts({ token, sessionId: "session_1", artifactId: "artifact_1" });
+
+    expect(seen.url).toBe(
+      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions/session_1/artifacts/artifact_1",
+    );
+    expect(seen.init?.method).toBe("GET");
+  });
+
   it("offers a doAnything.run helper that creates a session then a run", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const urls: string[] = [];
@@ -1421,5 +1472,331 @@ describe("EazoAgentKit", () => {
     });
 
     expect(seen.body).toEqual({ instructions: "open the site" });
+  });
+
+  // -------------------------------------------------------------------------
+  // WebSearch
+  // -------------------------------------------------------------------------
+
+  it("routes webSearch read/refine/cancel to the project-scoped run endpoints", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        calls.push({
+          url: String(url),
+          method: init?.method,
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return jsonResponse({ data: { run_id: "run_1" } });
+      }) as typeof fetch,
+    });
+
+    await client.webSearch.get({ token, runId: "run_1" });
+    await client.webSearch.refine({ token, runId: "run_1", message: "narrow to 2025" });
+    await client.webSearch.cancel({ token, runId: "run_1", reason: "duplicate" });
+
+    const base = "https://eak.example.com/api/v1/projects/tenant_1/web_search/runs/run_1";
+    expect(calls).toEqual([
+      { url: base, method: "GET", body: undefined },
+      { url: `${base}/messages`, method: "POST", body: { message: "narrow to 2025" } },
+      { url: `${base}/cancel`, method: "POST", body: { reason: "duplicate" } },
+    ]);
+  });
+
+  it("streams webSearch run events over SSE from the project-scoped endpoint", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const seen: { url?: string; headers?: Record<string, string> } = {};
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        seen.url = String(url);
+        seen.headers = init?.headers as Record<string, string>;
+        return sseResponse(
+          'id: 1\nevent: web_search_result\ndata: {"url":"https://eazo.ai"}\n\nid: 2\nevent: final\ndata: done\n\n',
+        );
+      }) as typeof fetch,
+    });
+
+    const events = [];
+    for await (const event of client.webSearch.events({
+      token,
+      runId: "run_1",
+      lastEventId: "0",
+    })) {
+      events.push(event);
+    }
+
+    expect(seen.url).toBe(
+      "https://eak.example.com/api/v1/projects/tenant_1/web_search/runs/run_1/events",
+    );
+    expect(seen.headers?.["last-event-id"]).toBe("0");
+    expect(events).toEqual([
+      { id: "1", event: "web_search_result", data: { url: "https://eazo.ai" } },
+      { id: "2", event: "final", data: "done" },
+    ]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Track
+  // -------------------------------------------------------------------------
+
+  it("maps the full Track monitor lifecycle to the backend monitors contract", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        calls.push({
+          url: String(url),
+          method: init?.method,
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return jsonResponse({ data: { id: "mon_1" } });
+      }) as typeof fetch,
+    });
+
+    await client.track.createMonitor({
+      token,
+      url: "https://eazo.ai/pricing",
+      instructions: "alert me when the price changes",
+    });
+    await client.track.getMonitor({ token, monitorId: "mon_1" });
+    await client.track.runNow({ token, monitorId: "mon_1" });
+    await client.track.updateMonitor({ token, monitorId: "mon_1", schedule: "0 9 * * *" });
+    await client.track.deleteMonitor({ token, monitorId: "mon_1" });
+
+    const monitors = "https://eak.example.com/api/v1/projects/tenant_1/track/monitors";
+    expect(calls).toEqual([
+      {
+        url: monitors,
+        method: "POST",
+        body: {
+          url: "https://eazo.ai/pricing",
+          instructions: "alert me when the price changes",
+        },
+      },
+      { url: `${monitors}/mon_1`, method: "GET", body: undefined },
+      { url: `${monitors}/mon_1/run_now`, method: "POST", body: {} },
+      { url: `${monitors}/mon_1`, method: "PATCH", body: { schedule: "0 9 * * *" } },
+      { url: `${monitors}/mon_1`, method: "DELETE", body: undefined },
+    ]);
+  });
+
+  it("streams Track monitor events over SSE", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const seen: { url?: string; headers?: Record<string, string> } = {};
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        seen.url = String(url);
+        seen.headers = init?.headers as Record<string, string>;
+        return sseResponse('id: 7\nevent: track_change\ndata: {"changed":true}\n\n');
+      }) as typeof fetch,
+    });
+
+    const events = [];
+    for await (const event of client.track.events({
+      token,
+      monitorId: "mon_1",
+      lastEventId: "6",
+    })) {
+      events.push(event);
+    }
+
+    expect(seen.url).toBe(
+      "https://eak.example.com/api/v1/projects/tenant_1/track/monitors/mon_1/events",
+    );
+    expect(seen.headers?.["last-event-id"]).toBe("6");
+    expect(events).toEqual([{ id: "7", event: "track_change", data: { changed: true } }]);
+  });
+
+  // -------------------------------------------------------------------------
+  // DeepResearch
+  // -------------------------------------------------------------------------
+
+  it("creates a DeepResearch run and maps camelCase sugar to the backend contract", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const seen: { url?: string; method?: string; body?: unknown } = {};
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        seen.url = String(url);
+        seen.method = init?.method;
+        seen.body = JSON.parse(String(init?.body));
+        return jsonResponse({ data: { id: "dr_run_1" } }, { status: 202 });
+      }) as typeof fetch,
+    });
+
+    const run = await client.deepResearch.run<{ id: string }>({
+      token,
+      topic: "state of EU battery recycling 2026",
+      depth: "deep",
+      outputFormat: "report",
+      targetAudience: "investors",
+      requireOutlineApproval: false,
+      maxCostUsd: "5.00",
+      maxDurationMinutes: 120,
+      callbackUrl: "https://app.example.com/hooks/dr",
+      domainWhitelist: ["eazo.ai"],
+    });
+
+    expect(run.data).toMatchObject({ id: "dr_run_1" });
+    expect(seen.url).toBe(
+      "https://eak.example.com/api/v1/projects/tenant_1/deep_research/runs",
+    );
+    expect(seen.method).toBe("POST");
+    expect(seen.body).toEqual({
+      topic: "state of EU battery recycling 2026",
+      depth: "deep",
+      output_format: "report",
+      target_audience: "investors",
+      require_outline_approval: false,
+      max_cost_usd: "5.00",
+      max_duration_minutes: 120,
+      callback_url: "https://app.example.com/hooks/dr",
+      domain_whitelist: ["eazo.ai"],
+    });
+  });
+
+  it("routes DeepResearch run read/intervene/followUp/cancel/feedback to backend endpoints", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        calls.push({
+          url: String(url),
+          method: init?.method,
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return jsonResponse({ data: { id: "dr_run_1" } });
+      }) as typeof fetch,
+    });
+
+    await client.deepResearch.get({ token, runId: "dr_run_1" });
+    await client.deepResearch.intervene({
+      token,
+      runId: "dr_run_1",
+      requestId: "req_outline_1",
+      response: "approve",
+    });
+    await client.deepResearch.followUp({
+      token,
+      runId: "dr_run_1",
+      text: "also compare against 2025",
+    });
+    await client.deepResearch.cancel({ token, runId: "dr_run_1" });
+    await client.deepResearch.feedback({
+      token,
+      runId: "dr_run_1",
+      thumbs: "up",
+      rating: 5,
+      feedbackText: "thorough",
+    });
+
+    const base = "https://eak.example.com/api/v1/projects/tenant_1/deep_research/runs/dr_run_1";
+    expect(calls).toEqual([
+      { url: base, method: "GET", body: undefined },
+      {
+        url: `${base}/intervene`,
+        method: "POST",
+        body: { request_id: "req_outline_1", response: "approve" },
+      },
+      {
+        url: `${base}/messages`,
+        method: "POST",
+        body: { text: "also compare against 2025" },
+      },
+      { url: `${base}/cancel`, method: "POST", body: {} },
+      {
+        url: `${base}/feedback`,
+        method: "POST",
+        body: { thumbs: "up", rating: 5, feedback_text: "thorough" },
+      },
+    ]);
+  });
+
+  it("reads DeepResearch artifacts from the project-scoped artifact endpoints", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const calls: Array<{ url: string; method?: string }> = [];
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        calls.push({ url: String(url), method: init?.method });
+        return jsonResponse({ data: { items: [] } });
+      }) as typeof fetch,
+    });
+
+    await client.deepResearch.listArtifacts({ token, runId: "dr_run_1" });
+    await client.deepResearch.getArtifact({
+      token,
+      runId: "dr_run_1",
+      artifactId: "art_1",
+    });
+
+    const base = "https://eak.example.com/api/v1/projects/tenant_1/deep_research/runs/dr_run_1";
+    expect(calls).toEqual([
+      { url: `${base}/artifacts`, method: "GET" },
+      { url: `${base}/artifacts/art_1`, method: "GET" },
+    ]);
+  });
+
+  it("streams DeepResearch run events over SSE", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const seen: { url?: string; headers?: Record<string, string> } = {};
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
+        seen.url = String(url);
+        seen.headers = init?.headers as Record<string, string>;
+        return sseResponse(
+          'id: 1\nevent: run.input_request\ndata: {"request_id":"req_outline_1"}\n\nid: 2\nevent: final\ndata: done\n\n',
+        );
+      }) as typeof fetch,
+    });
+
+    const events = [];
+    for await (const event of client.deepResearch.events({
+      token,
+      runId: "dr_run_1",
+      lastEventId: "0",
+    })) {
+      events.push(event);
+    }
+
+    expect(seen.url).toBe(
+      "https://eak.example.com/api/v1/projects/tenant_1/deep_research/runs/dr_run_1/events",
+    );
+    expect(seen.headers?.["last-event-id"]).toBe("0");
+    expect(events).toEqual([
+      { id: "1", event: "run.input_request", data: { request_id: "req_outline_1" } },
+      { id: "2", event: "final", data: "done" },
+    ]);
   });
 });

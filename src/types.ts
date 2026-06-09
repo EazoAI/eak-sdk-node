@@ -155,7 +155,8 @@ export type DelegateAgentResponse =
 export type DelegateTokenResult = DelegateAgentResponse;
 
 export interface TokenInput {
-  token: string;
+  /** Delegation/runtime token to authorize the call with. */
+  token?: string;
 }
 
 export type RuntimeTokenInput = TokenInput;

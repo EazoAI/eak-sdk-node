@@ -1,4 +1,5 @@
 import { buildSignedHeaders } from "./auth";
+import { createDeepResearchNamespace } from "./deep-research";
 import { createDoAnythingNamespace } from "./do-anything";
 import { createEakNamespace } from "./eak";
 import { EAKDelegationRequiredError, errorFromPayload, timeoutError } from "./errors";
@@ -49,16 +50,17 @@ export class EazoAgentKit {
   readonly webSearch: ReturnType<typeof createWebSearchNamespace>;
   readonly doAnything: ReturnType<typeof createDoAnythingNamespace>;
   readonly track: ReturnType<typeof createTrackNamespace>;
+  readonly deepResearch: ReturnType<typeof createDeepResearchNamespace>;
 
   constructor(private readonly options: EAKOptions) {
     const accessKey = options.accessKey ?? options.accessKeyId;
     const secretKey = options.secretKey ?? options.accessKeySecret;
     const host = options.host ?? options.eakBaseUrl ?? options.genauthBaseUrl ?? DEFAULT_EAK_HOST;
     if (!accessKey || !secretKey) {
-      throw new Error("EAK accessKey and secretKey are required");
+      throw new Error("EAK requires accessKey and secretKey");
     }
-    this.accessKey = accessKey;
-    this.secretKey = secretKey;
+    this.accessKey = accessKey ?? "";
+    this.secretKey = secretKey ?? "";
     this.host = normalizeBaseUrl(host);
     this.fetchImpl = options.fetch ?? fetch;
     this.timeoutMs = options.timeoutMs ?? 30_000;
@@ -82,6 +84,7 @@ export class EazoAgentKit {
     this.webSearch = createWebSearchNamespace(transport);
     this.doAnything = createDoAnythingNamespace(transport);
     this.track = createTrackNamespace(transport);
+    this.deepResearch = createDeepResearchNamespace(transport);
   }
 
   delegateToken(
@@ -454,6 +457,7 @@ export class EazoAgentKit {
   private webAgentPath(token: string, path: string): string {
     const normalized = normalizePath(path);
     if (normalized.startsWith("/api/v1/projects/")) return normalized;
+    // The tenant is carried by the delegation token (a JWT).
     const tenantId = requiredWebAgentTenantId(token);
     return `/api/v1/projects/${encodeURIComponent(tenantId)}${normalized}`;
   }

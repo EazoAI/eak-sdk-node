@@ -5,3 +5,5 @@ coverage/
 .env.*
 .playwright-cli
 examples/
+.secrets/
+tests/eak-smoke.ts

@@ -6,6 +6,61 @@ import type {
   RuntimeTokenInput,
 } from "./types";
 
+/**
+ * A structured snapshot of the agent's state at a single step — not just an
+ * image. The screenshot is one field (an inline reference/data), alongside the
+ * metadata and extracted page state captured at that moment.
+ */
+export interface DoAnythingSnapshot {
+  /** When the snapshot was captured (ISO 8601). */
+  capturedAt?: string;
+  /** Which step of the run this snapshot belongs to. */
+  stepIndex?: number;
+  /** The page the agent was on. */
+  url?: string;
+  /** Title of the page, if known. */
+  title?: string;
+  /** The screenshot image — carried in JSON (base64) and/or by reference. */
+  image?: SnapshotImage;
+  /** Important interactive/visible elements extracted from the page. */
+  elements?: SnapshotElement[];
+  /** What the agent was doing at this step. */
+  action?: SnapshotAction;
+}
+
+export interface SnapshotImage {
+  /** Base64-encoded image bytes (no data: prefix). */
+  base64?: string;
+  /** MIME type, e.g. "image/jpeg". */
+  contentType?: string;
+  /** Direct URL to the image, when the backend exposes one. */
+  url?: string;
+  /** Artifact id, when the image is stored as an artifact. */
+  artifactId?: string;
+  width?: number;
+  height?: number;
+}
+
+export interface SnapshotElement {
+  /** Stable index the agent uses to reference this element. */
+  index?: number;
+  /** "button" | "link" | "input" | ... */
+  role?: string;
+  /** Visible label/text. */
+  label?: string;
+  /** Bounding box in viewport coordinates. */
+  bbox?: { x: number; y: number; width: number; height: number };
+}
+
+export interface SnapshotAction {
+  /** "navigate" | "click" | "type" | ... */
+  kind?: string;
+  /** The element/URL/value the action targeted. */
+  target?: string;
+  /** Human-readable summary of the action. */
+  summary?: string;
+}
+
 export interface DoAnythingRunInput extends RuntimeTokenInput {
   instruction?: string;
   /** @deprecated Use instruction. */
@@ -108,7 +163,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         },
       ),
 
-    readArtifacts: <T = unknown>(
+    readArtifacts: <T = DoAnythingSnapshot>(
       input: RuntimeTokenInput & { sessionId: string; artifactId: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(

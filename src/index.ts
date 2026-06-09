@@ -14,6 +14,12 @@ export {
 export { EAKEventTypes } from "./events";
 export { EAKScopeBundles, EAKScopes } from "./scopes";
 export type {
+  DoAnythingSnapshot,
+  SnapshotImage,
+  SnapshotElement,
+  SnapshotAction,
+} from "./do-anything";
+export type {
   EAKCredentialCreateInput,
   EAKCredentialListInput,
   EAKCredentialRotateInput,
