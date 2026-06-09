@@ -6,4 +6,4 @@ coverage/
 .playwright-cli
 examples/
 .secrets/
-tests/eak-smoke.ts
+tests/eak-smoke*
