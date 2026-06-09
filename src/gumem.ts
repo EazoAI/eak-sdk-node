@@ -93,19 +93,19 @@ export function createGumemNamespace(transport: EAKTransport) {
       record: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
         transport.gumemJson("POST", "/api/user/actions", input.token, {
           body: omit(input, "token"),
-          requiredScopes: ["gumem.memory:write"],
+          requiredScopes: ["gumem.action:write"],
         }),
 
       recall: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
         transport.gumemJson("GET", "/api/user/actions/query", input.token, {
           query: omit(input, "token"),
-          requiredScopes: ["gumem.memory:read"],
+          requiredScopes: ["gumem.action:read"],
         }),
 
       stream: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
         transport.gumemJson("GET", "/api/user/actions/stream", input.token, {
           query: omit(input, "token"),
-          requiredScopes: ["gumem.memory:read"],
+          requiredScopes: ["gumem.action:read"],
         }),
     },
   };
