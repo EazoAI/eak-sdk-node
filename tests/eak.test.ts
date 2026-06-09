@@ -1186,7 +1186,6 @@ describe("EazoAgentKit", () => {
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:manage"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:read"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:run"] },
-      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:stop"] },
     ]);
   });
 
