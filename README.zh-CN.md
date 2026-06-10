@@ -458,7 +458,7 @@ type EAKEvent<T = unknown> = {
 
 ## 错误处理
 
-所有 SDK 错误都继承自 `EAKError`，并尽量暴露 `code`、`status`、`requestId`、`traceId`、`auditId`、`retryable` 和原始响应 `body`。
+所有 SDK 错误都继承自 `EAKError`，并尽量暴露 `code`、`status`、`requestId`、`traceId`、`auditId`、`retryable` 和原始响应 `body`。`code` 的类型是 `EAKErrorCode`（已知 SDK / 后端 code 加 `(string & {})`），既有字面量自动补全、可对已知集做 `switch (err.code)` 穷尽处理，又兼容后端新增的 code。
 
 ```ts
 import {

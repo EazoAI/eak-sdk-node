@@ -11,6 +11,7 @@ export {
   EAKUpstreamError,
   EAKValidationError,
 } from "./errors";
+export type { EAKErrorCode, EAKErrorOptions } from "./errors";
 export { EAKEventTypes } from "./events";
 export { EAKScopeBundles, EAKScopes } from "./scopes";
 export type {

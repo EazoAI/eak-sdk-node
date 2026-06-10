@@ -1,7 +1,34 @@
 import { isJsonObject, type JsonObject } from "./types";
 
+/**
+ * Known `EAKError.code` values. The SDK assigns the `*.*` codes; the `eak.*`
+ * codes are backend apiCodes surfaced verbatim. The trailing `(string & {})`
+ * keeps `code` assignable from any string (the backend may add new codes)
+ * while still giving literal autocomplete and letting you write an exhaustive
+ * `switch (err.code)` over the known set.
+ */
+export type EAKErrorCode =
+  | "eak_error"
+  | "auth.failed"
+  | "delegation.required"
+  | "permission_denied"
+  | "token.expired"
+  | "validation.failed"
+  | "rate_limit.exceeded"
+  | "upstream.failed"
+  | "timeout"
+  | "not_found"
+  | "conflict"
+  | "eak.delegation.user_not_bound"
+  | "eak.genauth.userpool_binding_missing"
+  | "eak.genauth.userpool_owner_missing"
+  | "eak.genauth.no_bound_users"
+  | "eak.token_exchange.upstream_failed"
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  | (string & {});
+
 export interface EAKErrorOptions {
-  code?: string;
+  code?: EAKErrorCode;
   status?: number;
   requestId?: string;
   traceId?: string;
@@ -12,7 +39,7 @@ export interface EAKErrorOptions {
 }
 
 export class EAKError extends Error {
-  readonly code: string;
+  readonly code: EAKErrorCode;
   readonly status?: number;
   readonly requestId?: string;
   readonly traceId?: string;

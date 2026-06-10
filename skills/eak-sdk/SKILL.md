@@ -213,6 +213,40 @@ for await (const event of eak.doAnything.events({ token, sessionId, runId })) {
 }
 ```
 
+## Run Lifecycle & State Machine
+
+A run's `status` (on `run.status_changed` events and `getRun`) moves through:
+
+```
+pending → running → (running ⇄ awaiting_input)* → succeeded | failed | canceled
+```
+
+- `pending` — accepted, not started.
+- `running` — the agent is working.
+- `awaiting_input` — parked. The `waiting_reason` (`human_intervention`,
+  `confirmation_required`, `user_paused`, `sleep_until`, `external_signal`) is
+  informational; do NOT branch your control flow on it.
+- `succeeded` / `failed` / `canceled` — terminal (`run.completed`; outcome in
+  `terminal_reason` / `is_task_successful`).
+
+**Client action is event-driven, not status-driven.** The only thing that needs
+you is `run.input_request` (surface `live_url` so a human can log in / confirm —
+see Login Wall). Everything else, including login walls, the backend re-probes
+and resumes on its own. A run flapping `running ⇄ awaiting_input` (e.g.
+`waiting_reason=confirmation_required` during internal pacing) is expected — do
+NOT poll or call `intervene`. Only call `intervene` for a run you deliberately
+paused (`user_paused` via take-control).
+
+### Parent & sub-tasks
+
+One `run()` can spawn internal sub-runs (planning / grading), so the stream may
+carry events for more than one id plus `run.subtask_started` / `run.subtask_graded`.
+Each event's run id is `event.data.task_id`; your top-level run is the `run_id`
+from `run()`. To keep only your run's events, filter
+`event.data.task_id === run_id`. A run envelope's `parent_run_id` / `depth`
+identify where it sits in the hierarchy. (`runAndWait` already settles on your
+top-level run's `run.completed`.)
+
 ## Local GenAuth And Docker
 
 For local stacks, first pin the real service boundary:

@@ -46,6 +46,10 @@ streaming. **Breaking** — see below.
 - Onboarding hints: errors for `eak.delegation.user_not_bound` and
   `eak.genauth.userpool_binding_missing` now append a one-line, actionable hint
   to the message (e.g. pointing at `resolveAnyBoundUser` / `currentUser`).
+- `EAKError.code` is now typed as `EAKErrorCode` — a union of the known SDK /
+  backend codes plus `(string & {})` — so you get literal autocomplete and can
+  write an exhaustive `switch (err.code)` while still tolerating new backend
+  codes. Exported as `EAKErrorCode`.
 
 ## 0.1.0 - 2026-06-02
 
