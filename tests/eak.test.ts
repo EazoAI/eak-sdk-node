@@ -1477,6 +1477,86 @@ describe("EazoAgentKit", () => {
     ]);
   });
 
+  it("events({ onlyTopLevel: true }) drops sub-run events", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async () =>
+        sseResponse(
+          'id: 1\ndata: {"type":"run.action.started","task_id":"run_1","data":{}}\n\n' +
+            'id: 2\ndata: {"type":"run.subtask_started","task_id":"sub_1","data":{}}\n\n' +
+            'id: 3\ndata: {"type":"run.action.started","task_id":"sub_1","data":{}}\n\n' +
+            'id: 4\ndata: {"type":"run.completed","task_id":"run_1","data":{}}\n\n',
+        )) as typeof fetch,
+    });
+
+    const ids: (string | undefined)[] = [];
+    for await (const event of client.doAnything.events({
+      token,
+      sessionId: "sess_1",
+      runId: "run_1",
+      onlyTopLevel: true,
+    })) {
+      ids.push(event.id);
+    }
+    // Only the top-level run_1 events (1, 4) survive; sub_1 events (2, 3) dropped.
+    expect(ids).toEqual(["1", "4"]);
+  });
+
+  it("reconnect recovers from a 401 by retrying with a refreshed token", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    let call = 0;
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      sseMaxRetries: 3,
+      fetch: (async () => {
+        call += 1;
+        if (call === 1) {
+          // deliver one frame, then drop mid-stream
+          let pulls = 0;
+          const stream = new ReadableStream<Uint8Array>({
+            pull(controller) {
+              pulls += 1;
+              if (pulls === 1) {
+                controller.enqueue(
+                  new TextEncoder().encode('id: 1\ndata: {"type":"run.action.started","data":{}}\n\n'),
+                );
+              } else controller.error(new Error("ECONNRESET"));
+            },
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        if (call === 2) {
+          // reconnect hits an expired-token 401 — retryable because a refresh is available
+          return jsonResponse({ message: "token expired" }, { status: 401 });
+        }
+        // next reconnect (token refreshed) completes
+        return sseResponse('id: 2\ndata: {"type":"run.completed","data":{}}\n\n');
+      }) as typeof fetch,
+    });
+
+    const events = [];
+    for await (const event of client.doAnything.events({
+      token,
+      sessionId: "sess_1",
+      runId: "run_1",
+    })) {
+      events.push(event.event);
+    }
+
+    expect(call).toBe(3); // RST → reconnect(401) → reconnect(ok)
+    expect(events).toEqual([EAKEventTypes.RUN_ACTION_STARTED, EAKEventTypes.RUN_COMPLETED]);
+  });
+
   it("runAndWait drives a run to terminal and reports the settled outcome", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const actions: unknown[] = [];
@@ -1485,18 +1565,32 @@ describe("EazoAgentKit", () => {
       secretKey: "sk_test",
       host: "https://eak.example.com",
       webAgentBaseUrl: "https://eak.example.com",
-      fetch: (async (url: URL | RequestInfo) => {
+      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
         const u = String(url);
         if (u.endsWith("/do_anything/sessions")) {
           return jsonResponse({ data: { id: "sess_1" } });
         }
-        if (u.endsWith("/sessions/sess_1/runs")) {
+        if (u.endsWith("/sessions/sess_1/runs") && init?.method === "POST") {
           return jsonResponse({ data: { run_id: "run_1", session_id: "sess_1" } });
         }
-        // events SSE: one action, then terminal completion.
+        // getRun (GET run-detail): the canonical envelope with cost / steps.
+        if (u.endsWith("/sessions/sess_1/runs/run_1")) {
+          return jsonResponse({
+            data: {
+              run_id: "run_1",
+              session_id: "sess_1",
+              terminal_reason: "done",
+              is_task_successful: true,
+              output: "the title",
+              total_cost_usd: "0.42",
+              step_count: 7,
+            },
+          });
+        }
+        // events SSE: one action, then terminal completion (leaner payload).
         return sseResponse(
           'id: 1\ndata: {"type":"run.action.started","data":{"kind":"navigate"}}\n\n' +
-            'id: 2\ndata: {"type":"run.completed","data":{"terminal_reason":"done","is_task_successful":true,"output":"the title"}}\n\n',
+            'id: 2\ndata: {"type":"run.completed","data":{"terminal_reason":"done","output":"the title"}}\n\n',
         );
       }) as typeof fetch,
     });
@@ -1509,7 +1603,7 @@ describe("EazoAgentKit", () => {
       },
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       runId: "run_1",
       sessionId: "sess_1",
       status: "succeeded",
@@ -1517,6 +1611,10 @@ describe("EazoAgentKit", () => {
       isTaskSuccessful: true,
       output: "the title",
     });
+    // #2: cost / steps are missing from the run.completed event but present on
+    // result.raw because runAndWait settles from the getRun envelope.
+    expect(result.raw?.total_cost_usd).toBe("0.42");
+    expect(result.raw?.step_count).toBe(7);
     expect(actions).toEqual(["navigate"]);
   });
 

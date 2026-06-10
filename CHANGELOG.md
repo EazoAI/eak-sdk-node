@@ -35,6 +35,15 @@ streaming. **Breaking** — see below.
 - Automatic SSE reconnect: `events()` resumes a dropped stream from the last
   event id (network / 5xx). Configure with the `sseMaxRetries` client option
   (default 5, `0` disables). User aborts and terminal 4xx are never retried.
+  Each reconnect re-resolves the product token, so a long stream survives token
+  expiry — a `401` on reconnect is treated as retryable and recovered with a
+  fresh token instead of throwing.
+- `doAnything.events({ onlyTopLevel: true })` drops internal sub-run events
+  (matched on `event.data.task_id`) and yields only the addressed run's events.
+- `doAnything.runAndWait` gains an `onCostUpdate` hook (live `run.cost_update`),
+  filters to the top-level run, and settles from the `getRun` envelope so
+  `result.raw` always carries `total_cost_usd` / `step_count` / token counts
+  (the `run.completed` event payload omits them).
 - `doAnything.runAndWait({ instruction, onAction, onScreenshot, onInputRequest,
   timeoutMs, signal, ... })` — high-level helper that starts a run, drives its
   event stream to a terminal state, and resolves a settled

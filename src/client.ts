@@ -241,14 +241,25 @@ export class EazoAgentKit {
   private async *webAgentSSE<T>(
     path: string,
     token?: string,
-    payload: RequestPayload & { lastEventId?: string; signal?: AbortSignal } = {},
+    payload: RequestPayload & {
+      lastEventId?: string;
+      signal?: AbortSignal;
+      onReconnect?: (info: { attempt: number; lastEventId?: string; error: unknown }) => void;
+    } = {},
   ): AsyncIterable<EAKEvent<T>> {
     const runtimeToken = await this.productTokenFor("webagent", token, payload.requiredScopes);
     const baseUrl = await this.baseUrlFor("webagent");
     for await (const event of this.sseRequest<T>(
       baseUrl,
       this.webAgentPath(runtimeToken, path),
-      { ...payload, token: runtimeToken, service: "webagent" },
+      {
+        ...payload,
+        token: runtimeToken,
+        service: "webagent",
+        // Re-resolve the product token before each reconnect (refreshes if the
+        // cached one expired); the tenant — and therefore the path — is stable.
+        refreshToken: () => this.productTokenFor("webagent", token, payload.requiredScopes),
+      },
     )) {
       // WebAgent run streams carry no SSE `event:` line — the wire event type
       // lives in the envelope's `type` field. Surface it as `event.event` so
@@ -329,14 +340,21 @@ export class EazoAgentKit {
       service: EAKService;
       lastEventId?: string;
       signal?: AbortSignal;
+      // Re-resolved before every (re)connect so a long stream survives product
+      // token expiry — the dominant cause of a reconnect failing with 401.
+      refreshToken?: () => Promise<string>;
+      // Observability: called before each reconnect attempt (not the first).
+      onReconnect?: (info: { attempt: number; lastEventId?: string; error: unknown }) => void;
     },
   ): AsyncIterable<EAKEvent<T>> {
     let lastEventId = options.lastEventId;
     let attempt = 0;
     for (;;) {
+      const token = options.refreshToken ? await options.refreshToken() : options.token;
       try {
         for await (const event of this.sseConnectOnce<T>(baseUrl, pathname, {
           ...options,
+          token,
           lastEventId,
         })) {
           if (event.id) lastEventId = event.id;
@@ -346,8 +364,13 @@ export class EazoAgentKit {
         return; // server closed the stream cleanly — the run is over
       } catch (err) {
         if (options.signal?.aborted) throw err; // user abort — never retry
-        if (attempt >= this.sseMaxRetries || !isRetryableStreamError(err)) throw err;
+        // 401/403 on a reconnect is usually an expired product token; with a
+        // refreshToken the next attempt re-resolves it, so allow the retry.
+        const canRetry =
+          isRetryableStreamError(err) || (!!options.refreshToken && isAuthError(err));
+        if (attempt >= this.sseMaxRetries || !canRetry) throw err;
         attempt++;
+        options.onReconnect?.({ attempt, lastEventId, error: err });
         await sleepWithAbort(sseBackoffMs(attempt), options.signal);
       }
     }
@@ -885,6 +908,13 @@ function isRetryableStreamError(err: unknown): boolean {
     }
   }
   return true; // unknown / network read error — reconnect
+}
+
+// 401/403 — retryable only when a token refresh is available (the next attempt
+// re-resolves the product token); never retryable on its own.
+function isAuthError(err: unknown): boolean {
+  const status = (err as { status?: number } | null)?.status;
+  return status === 401 || status === 403;
 }
 
 function sseBackoffMs(attempt: number): number {

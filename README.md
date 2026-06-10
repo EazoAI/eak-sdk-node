@@ -173,8 +173,10 @@ const result = await eak.doAnything.runAndWait({
   instruction: "Open the customer website and summarize recent product updates.",
   timeoutMs: 180_000,
   onInputRequest: (payload) => openBrowserForUser(payload.live_url), // login / confirm handoff
+  onCostUpdate: (payload) => trackSpend(payload),                    // live running cost
 });
 // result.status: "succeeded" | "failed" | "canceled" | "timed_out"; result.output: final payload
+// result.raw: the getRun envelope — total_cost_usd / step_count / token counts live here
 ```
 
 ## Authorization Model
