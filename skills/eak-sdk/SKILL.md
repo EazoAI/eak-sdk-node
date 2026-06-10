@@ -1,6 +1,6 @@
 ---
 name: eak-sdk
-description: Use when building, testing, debugging, or documenting Node.js integrations with @eazo/eak, EazoAgentKit/EAK, AK/SK credentials, delegateToken, GenAuth currentUser/userInfo/introspection/user management, EAK runtime-config discovery, GUMem, WebAgent, Web Search, Do Anything, Track, OBO product token exchange, or local .genauth.localhost SDK flows.
+description: Use when building, testing, debugging, or documenting Node.js integrations with @eazo/eak, EazoAgentKit/EAK, AK/SK credentials, delegateToken, GenAuth currentUser/userInfo/introspection/user management, EAK runtime-config discovery, GUMem, WebAgent, Web Search, Do Anything, Deep Research, Track, OBO product token exchange, or local .genauth.localhost SDK flows.
 ---
 
 # EAK SDK
@@ -10,7 +10,7 @@ description: Use when building, testing, debugging, or documenting Node.js integ
 Use `@eazo/eak` from trusted server-side Node.js code. Keep AK/SK on the server and create one reusable `EazoAgentKit`. For silent runtime product calls, resolve a real GenAuth user id from the credential-bound userpool, call `delegateToken`, then pass `delegation.data.token` explicitly to every product capability call. For interactive runtime authorization, call `delegateToken({ mode: "interactive", redirectUri, state, agent, scopes })` from the server without exposing AK/SK; redirect the user to `authorizationUrl`, then handle the business callback server-side with `completeDelegateToken({ grantId, code, state })` to receive the token. For GenAuth user management, call `eak.genauth.users.*`; the SDK exchanges AK/SK for a standard GenAuth management token internally and does not require `EAK_USER_ID`.
 
 ```ts
-import { EazoAgentKit, EAKScopeBundles, EAKScopes } from "@eazo/eak";
+import { EazoAgentKit, EAKEventTypes, EAKScopeBundles, EAKScopes } from "@eazo/eak";
 
 const eak = new EazoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
@@ -114,7 +114,78 @@ Use `delegateToken` output for runtime capability namespaces:
 - `gumem.createSession`, `gumem.addMessages`, `gumem.recall`, `gumem.uploadResource`, `gumem.actions.*`
 - `webSearch.run/get/refine/events/cancel`
 - `doAnything.run/createSession/createRun/getRun/events/intervene/cancel/readArtifacts/readRecording`
+- `deepResearch.run/get/events/followUp/intervene/cancel/feedback/listArtifacts/getArtifact`
 - `track.createMonitor/getMonitor/updateMonitor/deleteMonitor/runNow/events`
+
+## Do Anything Runtime Shapes
+
+`doAnything.run({ token, instruction, stream?, context? })` creates a session and a run in one call and returns `EAKResponse<DoAnythingRunResult>`. The canonical run naming (shared with Deep Research and Web Search) is snake_case:
+
+- run id: `data.run_id`
+- session id: `data.session_id`
+
+Pass both to `events`/`getRun`/`intervene`/`cancel` to address the run. Other envelope fields (status, output, costs, …) ride along under the result's index signature. Pass `stream.events: EAKEventType[]` to tell the backend which events to emit.
+
+Stream with `doAnything.events({ token, sessionId, runId, signal? })` — an `AsyncIterable<EAKEvent>` where each event is `{ id?, event, data }`. Match `event.event` against `EAKEventTypes` (use the constants, not raw strings):
+
+- `DO_ANYTHING_REASONING_DELTA` (`"reasoning_delta"`) — streaming reasoning text.
+- `DO_ANYTHING_ACTION` (`"action"`) — one agent action (navigate/click/type).
+- `DO_ANYTHING_OBSERVATION` (`"observation"`) — what the agent saw after an action.
+- `DO_ANYTHING_SCREENSHOT` (`"screenshot"`) — per-step still; fetch bytes via `doAnything.readArtifacts`.
+- `DO_ANYTHING_BROWSER_VIDEO_FRAME` (`"browser_video_frame"`) — live video frame.
+- `DO_ANYTHING_USER_ACTION_REQUIRED` (`"user_action_required"`) — a human is needed (login/confirm); see the Login Wall section.
+- `DO_ANYTHING_ARTIFACT` (`"artifact"`) — produced artifact reference.
+- `DO_ANYTHING_FINAL` (`"final"`) — terminal; the run is done, stop iterating.
+
+Terminal detection: break when `event.event === EAKEventTypes.DO_ANYTHING_FINAL`. The final answer is in that event's `data` (for example `data.output`); the payload is product-specific, so read `data` rather than assuming a fixed field name. Bound wall-clock with `signal: AbortSignal.timeout(ms)`; a timeout/abort does not mean the run failed — the backend task may still be running.
+
+```ts
+const run = await eak.doAnything.run({
+  token,
+  instruction: "Open https://example.com and summarize the page, then finish.",
+  stream: {
+    events: [
+      EAKEventTypes.DO_ANYTHING_ACTION,
+      EAKEventTypes.DO_ANYTHING_OBSERVATION,
+      EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED,
+      EAKEventTypes.DO_ANYTHING_FINAL,
+    ],
+  },
+});
+
+const { run_id, session_id } = run.data;
+
+for await (const event of eak.doAnything.events({
+  token,
+  sessionId: session_id,
+  runId: run_id,
+  signal: AbortSignal.timeout(180_000),
+})) {
+  if (event.event === EAKEventTypes.DO_ANYTHING_FINAL) {
+    console.log("answer:", event.data);
+    break;
+  }
+}
+```
+
+## Do Anything Login Wall (human handoff)
+
+A web task often hits a page only the end user can log in to. The agent parks and emits `DO_ANYTHING_USER_ACTION_REQUIRED` carrying an interactive live-browser URL at `event.data.live_url`. The client's ONLY job is to surface that URL so the human can sign in. Login detection is the BACKEND's job: it re-probes on its own timer and resumes the run automatically once login succeeds.
+
+- Open `live_url` ONCE in a real browser window for the user. Do NOT poll, do NOT call `intervene`, do NOT wait on the window closing.
+- Keep iterating the same event stream. The run progresses past the wall and reaches `DO_ANYTHING_FINAL` on its own once the user is signed in.
+- The first login is unavoidable; later runs reuse persisted login state and never reach this wall.
+
+```ts
+for await (const event of eak.doAnything.events({ token, sessionId, runId })) {
+  if (event.event === EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED) {
+    const liveUrl = (event.data as { live_url?: string }).live_url;
+    if (liveUrl) openBrowserForUser(liveUrl); // pop once; the run resumes by itself
+    continue;
+  }
+  if (event.event === EAKEventTypes.DO_ANYTHING_FINAL) break;
+}
+```
 
 ## Local GenAuth And Docker
 
@@ -141,8 +212,8 @@ For local stacks, first pin the real service boundary:
 
 For a real hosted GUMem smoke, require:
 
-- `EAK_ACCESS_KEY` and `EAK_SECRET_KEY`.
-- `EAK_USER_ID`, from the GenAuth userpool bound to the EAK credential. A placeholder like `user_1` usually fails with `eak.delegation.user_not_bound`.
+- `EAK_ACCESS_KEY` and `EAK_SECRET_KEY` — the only mandatory inputs.
+- Optional `EAK_USER_ID`, a real user from the GenAuth userpool bound to the EAK credential. A delegation token is always bound to a real user, but you do not have to supply this: with only AK/SK the smoke discovers a user via `genauth.users.list` and uses the first one. Set `EAK_USER_ID` only to pin a specific user or skip discovery. A placeholder like `user_1` usually fails with `eak.delegation.user_not_bound`. In real app code, resolve the actual logged-in user (e.g. via `currentUser`) instead of picking the first userpool member.
 - Optional `EAK_HOST`; use it only for private or local EAK deployments.
 - Optional `EAK_AGENT_ID`; default examples can use `memory-agent`, but the credential and product binding must allow the requested scopes.
 

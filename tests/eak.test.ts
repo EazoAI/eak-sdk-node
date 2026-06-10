@@ -1183,6 +1183,9 @@ describe("EazoAgentKit", () => {
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:run"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:read"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:stop"] },
+      // createMonitor → track:manage. getMonitor → track:read. runNow → track:run.
+      // deleteMonitor + updateMonitor also need track:manage but reuse the cached
+      // product token from createMonitor, so they trigger no further exchange.
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:manage"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:read"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:run"] },
@@ -1293,7 +1296,7 @@ describe("EazoAgentKit", () => {
       stream: { events: [EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME] },
     });
 
-    expect(run.data).toMatchObject({ id: "run_auto", sessionId: "sess_auto" });
+    expect(run.data).toMatchObject({ id: "run_auto", session_id: "sess_auto" });
     expect(urls).toEqual([
       "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions",
       "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions/sess_auto/runs",

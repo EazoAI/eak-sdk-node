@@ -157,8 +157,8 @@ const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
 
 for await (const event of eak.doAnything.events({
   token,
-  sessionId: run.data.sessionId,
-  runId: run.data.id,
+  sessionId: run.data.session_id,
+  runId: run.data.run_id,
 })) {
   if (event.event === EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME) {
     renderBrowserFrame(event.data);
@@ -332,8 +332,8 @@ const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
 
 await eak.doAnything.cancel({
   token,
-  sessionId: run.data.sessionId,
-  runId: run.data.id,
+  sessionId: run.data.session_id,
+  runId: run.data.run_id,
   reason: "User stopped the task",
 });
 ```
@@ -430,10 +430,11 @@ import { EAK, EazoAgentKit } from "@eazo/eak";
 | GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken`, `users.list`, `users.get`, `users.getBatch`, `users.create`, `users.createBatch`, `users.update`, `users.deleteBatch` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
 | Do Anything | `run`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
+| Deep Research | `run`, `get`, `events`, `followUp`, `intervene`, `cancel`, `feedback`, `listArtifacts`, `getArtifact` |
 | Web Search | `run`, `get`, `refine`, `events`, `cancel` |
 | Track | `createMonitor`, `getMonitor`, `updateMonitor`, `deleteMonitor`, `runNow`, `events` |
 
-Browser Use, Deep Research, and Site Login scopes are reserved until their product runtime SDK methods are exported.
+Browser Use and Site Login scopes are reserved until their product runtime SDK methods are exported.
 
 ### Response Shape
 

@@ -71,9 +71,23 @@ export interface DoAnythingRunInput extends RuntimeTokenInput {
   [key: string]: unknown;
 }
 
+/**
+ * Result of `doAnything.run` — the run envelope returned by the backend.
+ * Wire keys are snake_case `run_id` / `session_id` (the canonical run
+ * naming shared by Do Anything, Deep Research, and Web Search). Pass both
+ * to `events`/`getRun`/`intervene`/`cancel` to address the run. Other
+ * envelope fields (status, output, costs, …) ride along under the index
+ * signature.
+ */
+export interface DoAnythingRunResult {
+  run_id: string;
+  session_id: string;
+  [key: string]: unknown;
+}
+
 export function createDoAnythingNamespace(transport: EAKTransport) {
   const namespace = {
-    run: async <T = unknown>(input: DoAnythingRunInput): Promise<EAKResponse<T>> => {
+    run: async <T = DoAnythingRunResult>(input: DoAnythingRunInput): Promise<EAKResponse<T>> => {
       const session = await namespace.createSession<{ id?: string; session_id?: string }>({
         token: input.token,
         ...(input.session || {}),
@@ -206,6 +220,10 @@ function normalizeDoAnythingRunInput(input: JsonObject): JsonObject {
   return body;
 }
 
+// `run` composes createSession + createRun; the backend run envelope already
+// carries `session_id`, but guarantee it for any backend that omits it so the
+// merged result always has both ids. Inject under the canonical snake_case key
+// (NOT camelCase) so callers read one consistent `session_id` field.
 function attachSessionId<T>(response: EAKResponse<T>, sessionId: string): EAKResponse<T> {
   if (!isRecord(response.data)) return response;
   if (typeof response.data.sessionId === "string" || typeof response.data.session_id === "string") {
@@ -215,7 +233,7 @@ function attachSessionId<T>(response: EAKResponse<T>, sessionId: string): EAKRes
     ...response,
     data: {
       ...response.data,
-      sessionId,
+      session_id: sessionId,
     } as T,
   };
 }

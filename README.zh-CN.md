@@ -427,10 +427,11 @@ import { EAK, EazoAgentKit } from "@eazo/eak";
 | GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken`, `users.list`, `users.get`, `users.getBatch`, `users.create`, `users.createBatch`, `users.update`, `users.deleteBatch` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
 | Do Anything | `run`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
+| Deep Research | `run`, `get`, `events`, `followUp`, `intervene`, `cancel`, `feedback`, `listArtifacts`, `getArtifact` |
 | Web Search | `run`, `get`, `refine`, `events`, `cancel` |
 | Track | `createMonitor`, `getMonitor`, `updateMonitor`, `deleteMonitor`, `runNow`, `events` |
 
-Browser Use、Deep Research、Site Login 的 scope 已预留，但产品运行时 SDK 方法导出前不作为公开方法说明。
+Browser Use、Site Login 的 scope 已预留，但产品运行时 SDK 方法导出前不作为公开方法说明。
 
 ### 返回结构
 
