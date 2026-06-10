@@ -117,6 +117,27 @@ Use `delegateToken` output for runtime capability namespaces:
 - `deepResearch.run/get/events/followUp/intervene/cancel/feedback/listArtifacts/getArtifact`
 - `track.createMonitor/getMonitor/updateMonitor/deleteMonitor/runNow/events`
 
+## Do Anything: runAndWait (high-level)
+
+For the common "run a task and get the result" case, prefer `doAnything.runAndWait`
+over wiring `run` + `events` + terminal detection yourself. It starts the run,
+drives the stream to a terminal state, and resolves a settled outcome; it falls
+back to `getRun` if the stream closes without a terminal event.
+
+```ts
+const result = await eak.doAnything.runAndWait({
+  token,
+  instruction: "Open https://example.com and summarize the page, then finish.",
+  timeoutMs: 180_000,                                  // client cap; status "timed_out" on elapse
+  onAction: (p) => console.log("action:", p),          // run.action.started payloads
+  onInputRequest: (p) => openBrowserForUser(p.live_url),// login / confirm — surface the live browser
+});
+// result: { runId, sessionId, status: "succeeded"|"failed"|"canceled"|"timed_out",
+//           terminalReason?, isTaskSuccessful?, output? }
+```
+
+Use `run` + `events` (below) only when you need fine-grained control of the stream.
+
 ## Do Anything Runtime Shapes
 
 `doAnything.run({ token, instruction, stream?, context? })` creates a session and a run in one call and returns `EAKResponse<DoAnythingRunResult>`. The canonical run naming (shared with Deep Research and Web Search) is snake_case:
@@ -218,7 +239,7 @@ For local stacks, first pin the real service boundary:
 For a real hosted GUMem smoke, require:
 
 - `EAK_ACCESS_KEY` and `EAK_SECRET_KEY` — the only mandatory inputs.
-- Optional `EAK_USER_ID`, a real user from the GenAuth userpool bound to the EAK credential. A delegation token is always bound to a real user, but you do not have to supply this: with only AK/SK the smoke discovers a user via `genauth.users.list` and uses the first one. Set `EAK_USER_ID` only to pin a specific user or skip discovery. A placeholder like `user_1` usually fails with `eak.delegation.user_not_bound`. In real app code, resolve the actual logged-in user (e.g. via `currentUser`) instead of picking the first userpool member.
+- Optional `EAK_USER_ID`, a real user from the GenAuth userpool bound to the EAK credential. A delegation token is always bound to a real user, but you do not have to supply this: with only AK/SK, call `eak.resolveAnyBoundUser()` (lists the bound userpool and returns the first user id) — that is exactly what a smoke needs. Set `EAK_USER_ID` only to pin a specific user or skip the lookup. A placeholder like `user_1` fails with `eak.delegation.user_not_bound` (the SDK appends a hint pointing at `resolveAnyBoundUser` / `currentUser`). In real app code, resolve the actual logged-in user via `currentUser` instead of picking the first userpool member.
 - Optional `EAK_HOST`; use it only for private or local EAK deployments.
 - Optional `EAK_AGENT_ID`; default examples can use `memory-agent`, but the credential and product binding must allow the requested scopes.
 

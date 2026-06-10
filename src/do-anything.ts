@@ -1,3 +1,4 @@
+import { EAKEventTypes } from "./events";
 import type {
   EAKEvent,
   EAKResponse,
@@ -85,6 +86,36 @@ export interface DoAnythingRunResult {
   [key: string]: unknown;
 }
 
+/** Settled outcome of `doAnything.runAndWait`. */
+export interface DoAnythingResult {
+  runId: string;
+  sessionId: string;
+  /** Mapped terminal status. `timed_out` is client-side (the `timeoutMs` cap elapsed). */
+  status: "succeeded" | "failed" | "canceled" | "timed_out";
+  /** Backend `terminal_reason` (done / failed / canceled / expired), when known. */
+  terminalReason?: string;
+  /** Whether the backend judged the task successful, when reported. */
+  isTaskSuccessful?: boolean;
+  /** Final answer / output payload (shape is task-specific). */
+  output?: unknown;
+}
+
+/**
+ * Input for `doAnything.runAndWait`: a `run()` input plus per-event hooks and a
+ * wall-clock cap. Hooks receive the event payload (`event.data.data`) and the
+ * raw event. Hook / timeout / signal fields are not forwarded to the backend.
+ */
+export interface DoAnythingRunAndWaitInput extends DoAnythingRunInput {
+  onEvent?: (event: EAKEvent) => void | Promise<void>;
+  onAction?: (payload: JsonObject, event: EAKEvent) => void | Promise<void>;
+  onScreenshot?: (payload: JsonObject, event: EAKEvent) => void | Promise<void>;
+  /** Fires on `run.input_request` (login / confirm). `payload.live_url` is the live browser, when present. */
+  onInputRequest?: (payload: JsonObject, event: EAKEvent) => void | Promise<void>;
+  /** Client-side wall-clock cap. On elapse, resolves with status `timed_out` (does NOT cancel the backend run). */
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
 export function createDoAnythingNamespace(transport: EAKTransport) {
   const namespace = {
     run: async <T = DoAnythingRunResult>(input: DoAnythingRunInput): Promise<EAKResponse<T>> => {
@@ -100,6 +131,52 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         sessionId,
       });
       return attachSessionId(run, sessionId);
+    },
+
+    // High-level: start a run and drive its event stream to a terminal state,
+    // returning a settled { status, output, ... }. Internally handles run() +
+    // events() + RUN_COMPLETED detection + a getRun() fallback if the stream
+    // closes without a terminal event. Use events() directly for fine control.
+    runAndWait: async (input: DoAnythingRunAndWaitInput): Promise<DoAnythingResult> => {
+      const { onEvent, onAction, onScreenshot, onInputRequest, timeoutMs, signal, ...runInput } =
+        input;
+      const run = await namespace.run<DoAnythingRunResult>(runInput as DoAnythingRunInput);
+      const runId = String(run.data.run_id ?? "");
+      const sessionId = String(run.data.session_id ?? "");
+      if (!runId || !sessionId) {
+        throw new Error(
+          `doAnything.runAndWait: run did not return ids: ${JSON.stringify(run.data)}`,
+        );
+      }
+
+      const { signal: waitSignal, timedOut } = withTimeout(signal, timeoutMs);
+      let settled: DoAnythingResult | undefined;
+      try {
+        for await (const event of namespace.events<JsonObject>({
+          token: input.token,
+          sessionId,
+          runId,
+          signal: waitSignal,
+        })) {
+          await onEvent?.(event);
+          const payload = eventPayload(event);
+          if (event.event === EAKEventTypes.RUN_ACTION_STARTED) await onAction?.(payload, event);
+          else if (event.event === EAKEventTypes.RUN_SCREENSHOT) await onScreenshot?.(payload, event);
+          else if (event.event === EAKEventTypes.RUN_INPUT_REQUEST)
+            await onInputRequest?.(payload, event);
+          else if (event.event === EAKEventTypes.RUN_COMPLETED) {
+            settled = settleRun(runId, sessionId, payload);
+            break;
+          }
+        }
+      } catch (err) {
+        if (timedOut() && !signal?.aborted) return { runId, sessionId, status: "timed_out" };
+        throw err; // user abort or non-retryable stream error
+      }
+      if (settled) return settled;
+      // Stream closed without a terminal event — fall back to run-detail status.
+      const detail = await namespace.getRun<JsonObject>({ token: input.token, sessionId, runId });
+      return settleRun(runId, sessionId, detail.data);
     },
 
     createSession: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
@@ -224,6 +301,49 @@ function normalizeDoAnythingRunInput(input: JsonObject): JsonObject {
 // carries `session_id`, but guarantee it for any backend that omits it so the
 // merged result always has both ids. Inject under the canonical snake_case key
 // (NOT camelCase) so callers read one consistent `session_id` field.
+// The per-event payload (`event.data.data`) for WebAgent run events.
+function eventPayload(event: EAKEvent): JsonObject {
+  const envelope = event.data as { data?: unknown } | null | undefined;
+  const inner = envelope && typeof envelope === "object" ? envelope.data : undefined;
+  return inner && typeof inner === "object" ? (inner as JsonObject) : {};
+}
+
+// Map a terminal run payload (a run.completed event's payload, or a getRun
+// response) to a settled DoAnythingResult. Completion defaults to "succeeded"
+// unless the backend signals failure / cancellation.
+function settleRun(runId: string, sessionId: string, p: JsonObject): DoAnythingResult {
+  const terminalReason = typeof p.terminal_reason === "string" ? p.terminal_reason : undefined;
+  const isTaskSuccessful = typeof p.is_task_successful === "boolean" ? p.is_task_successful : undefined;
+  let status: DoAnythingResult["status"];
+  if (terminalReason === "canceled") status = "canceled";
+  else if (terminalReason === "failed" || terminalReason === "expired" || isTaskSuccessful === false)
+    status = "failed";
+  else status = "succeeded";
+  return { runId, sessionId, status, terminalReason, isTaskSuccessful, output: p.output };
+}
+
+// Combine an optional user signal with an optional wall-clock timeout into one
+// signal (Node 18 has no AbortSignal.any). `timedOut()` reports whether OUR
+// timer fired (vs the user aborting), so the caller can distinguish them.
+function withTimeout(
+  signal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): { signal?: AbortSignal; timedOut: () => boolean } {
+  if (!timeoutMs) return { signal, timedOut: () => false };
+  const controller = new AbortController();
+  let fired = false;
+  const timer = setTimeout(() => {
+    fired = true;
+    controller.abort();
+  }, timeoutMs);
+  controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  return { signal: controller.signal, timedOut: () => fired };
+}
+
 function attachSessionId<T>(response: EAKResponse<T>, sessionId: string): EAKResponse<T> {
   if (!isRecord(response.data)) return response;
   if (typeof response.data.sessionId === "string" || typeof response.data.session_id === "string") {

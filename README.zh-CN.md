@@ -37,7 +37,7 @@ yarn add @eazo/eak
 - Node.js 18 或更高版本。
 - 服务端运行环境提供 `fetch`。
 - 在 EAK Console 创建的 `accessKey` 与 `secretKey`。
-- silent 运行时产品调用需要一个来自该 EAK credential 绑定 GenAuth userpool 的真实用户 ID。Smoke 测试可以通过 `EAK_USER_ID` 传入；业务代码中应通过 `currentUser` 或服务端已有登录态解析。interactive 委托创建时可以不传 `user` 或 `userId`，因为 EAK Console/BFF 会在授权过程中处理 GenAuth 登录。
+- silent 运行时产品调用需要一个来自该 EAK credential 绑定 GenAuth userpool 的真实用户 ID。Smoke 测试可以通过 `EAK_USER_ID` 传入，或调用 `eak.resolveAnyBoundUser()` 取绑定 userpool 里的第一个用户；业务代码中应通过 `currentUser` 或服务端已有登录态解析。interactive 委托创建时可以不传 `user` 或 `userId`，因为 EAK Console/BFF 会在授权过程中处理 GenAuth 登录。
 - `genauth.users.*` 管理面调用不需要 `EAK_USER_ID`。SDK 会用 AK/SK 向 EAK 换取 GenAuth management token。
 - 可选的 `host`，用于私有化或本地部署；托管版 EAK 通常保持未传。
 
@@ -158,6 +158,18 @@ for await (const event of eak.doAnything.events({
 
   if (event.event === EAKEventTypes.RUN_COMPLETED) break;
 }
+```
+
+常见场景可以跳过手写事件循环，直接用 `runAndWait`——它会把任务跑到终态并返回结果：
+
+```ts
+const result = await eak.doAnything.runAndWait({
+  token,
+  instruction: "打开客户官网并总结最近的产品变化。",
+  timeoutMs: 180_000,
+  onInputRequest: (payload) => openBrowserForUser(payload.live_url), // 登录 / 确认交接
+});
+// result.status: "succeeded" | "failed" | "canceled" | "timed_out";result.output: 终态产物
 ```
 
 这里的关键点不是方法有多少，而是每一步都有边界：Agent 只能做 token 里 scope 允许的事情，授权过期后不能继续执行，后端可以通过 `auditId` 追溯这次行为。
@@ -411,7 +423,7 @@ import { EAK, EazoAgentKit } from "@eazo/eak";
 | 委托授权 | `delegateToken`, `completeDelegateToken`；兼容别名：`delegateAgent`, `completeDelegateAgent` |
 | GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken`, `users.list`, `users.get`, `users.getBatch`, `users.create`, `users.createBatch`, `users.update`, `users.deleteBatch` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
-| Do Anything | `run`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
+| Do Anything | `run`, `runAndWait`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
 | Deep Research | `run`, `get`, `events`, `followUp`, `intervene`, `cancel`, `feedback`, `listArtifacts`, `getArtifact` |
 | Web Search | `run`, `get`, `refine`, `events`, `cancel` |
 | Track | `createMonitor`, `getMonitor`, `updateMonitor`, `deleteMonitor`, `runNow`, `events` |

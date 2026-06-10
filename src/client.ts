@@ -2,7 +2,7 @@ import { buildSignedHeaders } from "./auth";
 import { createDeepResearchNamespace } from "./deep-research";
 import { createDoAnythingNamespace } from "./do-anything";
 import { createEakNamespace } from "./eak";
-import { EAKDelegationRequiredError, errorFromPayload, timeoutError } from "./errors";
+import { EAKError, EAKDelegationRequiredError, errorFromPayload, timeoutError } from "./errors";
 import { createGenAuthNamespace } from "./genauth";
 import { createGumemNamespace } from "./gumem";
 import { createTrackNamespace } from "./track";
@@ -126,6 +126,26 @@ export class EazoAgentKit {
 
   currentUser<T = unknown>(input: GenAuthAccessTokenInput): Promise<EAKResponse<T>> {
     return this.genauth.userInfo<T>(input);
+  }
+
+  /**
+   * Resolve a real GenAuth user id from the userpool bound to this AK/SK, by
+   * listing users and returning the first one. Convenience for demos / smoke
+   * tests so `delegateToken` has a valid `userId` without hardcoding one. In
+   * application code, resolve the actual logged-in user via `currentUser`
+   * instead of picking an arbitrary userpool member.
+   */
+  async resolveAnyBoundUser(): Promise<string> {
+    const res = await this.genauth.users.list<unknown>({ page: 1, limit: 1 });
+    const userId = firstBoundUserId(res.data);
+    if (!userId) {
+      throw new EAKError(
+        "resolveAnyBoundUser: the credential-bound GenAuth userpool returned no users. " +
+          "Create a user in the userpool, or pass a real userId to delegateToken.",
+        { code: "eak.genauth.no_bound_users" },
+      );
+    }
+    return userId;
   }
 
   request<T = unknown>(input: RawRequestInput): Promise<EAKResponse<T>> {
@@ -888,6 +908,24 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+// Pull the first user id out of a genauth.users.list response, tolerating the
+// various envelope shapes (array, { list }, { users }, { data: [...] }) and id
+// field names the userpool may use.
+function firstBoundUserId(data: unknown): string | undefined {
+  const arrays = [data, (data as { list?: unknown })?.list, (data as { users?: unknown })?.users,
+    (data as { data?: unknown })?.data, (data as { items?: unknown })?.items];
+  for (const candidate of arrays) {
+    if (Array.isArray(candidate) && candidate.length) {
+      const u = candidate[0] as Record<string, unknown>;
+      for (const key of ["userId", "id", "user_id", "sub", "username"]) {
+        const v = u?.[key];
+        if (typeof v === "string" && v) return v;
+      }
+    }
+  }
+  return undefined;
 }
 
 function parseSSEEvent<T>(chunk: string): EAKEvent<T> | null {

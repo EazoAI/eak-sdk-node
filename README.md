@@ -42,7 +42,7 @@ Requirements:
 - Node.js 18 or later.
 - A server-side runtime with `fetch`.
 - EAK `accessKey` and `secretKey` created in EAK Console.
-- For silent runtime product calls, a real GenAuth user id from the userpool bound to the EAK credential. For smoke tests, pass it as `EAK_USER_ID`; in application code, resolve it with `currentUser` or your existing server-side user session. Interactive delegation can start without `user` or `userId` because the EAK Console/BFF resolves the GenAuth login during authorization.
+- For silent runtime product calls, a real GenAuth user id from the userpool bound to the EAK credential. For smoke tests, pass it as `EAK_USER_ID` or call `eak.resolveAnyBoundUser()` to grab the first bound user; in application code, resolve it with `currentUser` or your existing server-side user session. Interactive delegation can start without `user` or `userId` because the EAK Console/BFF resolves the GenAuth login during authorization.
 - For `genauth.users.*` management calls, `EAK_USER_ID` is not required. The SDK uses AK/SK to request a GenAuth management token from EAK.
 - Optional `host` for private or local EAK deployments. Leave it unset for hosted EAK.
 
@@ -163,6 +163,18 @@ for await (const event of eak.doAnything.events({
 
   if (event.event === EAKEventTypes.RUN_COMPLETED) break;
 }
+```
+
+For the common case, skip the manual event loop and use `runAndWait`, which drives the run to a terminal state and returns a settled outcome:
+
+```ts
+const result = await eak.doAnything.runAndWait({
+  token,
+  instruction: "Open the customer website and summarize recent product updates.",
+  timeoutMs: 180_000,
+  onInputRequest: (payload) => openBrowserForUser(payload.live_url), // login / confirm handoff
+});
+// result.status: "succeeded" | "failed" | "canceled" | "timed_out"; result.output: final payload
 ```
 
 ## Authorization Model
@@ -414,7 +426,7 @@ import { EAK, EazoAgentKit } from "@eazo/eak";
 | Delegation | `delegateToken`, `completeDelegateToken`, deprecated aliases `delegateAgent`, `completeDelegateAgent` |
 | GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken`, `users.list`, `users.get`, `users.getBatch`, `users.create`, `users.createBatch`, `users.update`, `users.deleteBatch` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
-| Do Anything | `run`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
+| Do Anything | `run`, `runAndWait`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
 | Deep Research | `run`, `get`, `events`, `followUp`, `intervene`, `cancel`, `feedback`, `listArtifacts`, `getArtifact` |
 | Web Search | `run`, `get`, `refine`, `events`, `cancel` |
 | Track | `createMonitor`, `getMonitor`, `updateMonitor`, `deleteMonitor`, `runNow`, `events` |

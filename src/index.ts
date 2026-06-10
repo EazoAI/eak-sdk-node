@@ -14,6 +14,8 @@ export {
 export { EAKEventTypes } from "./events";
 export { EAKScopeBundles, EAKScopes } from "./scopes";
 export type {
+  DoAnythingResult,
+  DoAnythingRunAndWaitInput,
   DoAnythingRunResult,
   DoAnythingSnapshot,
   SnapshotImage,

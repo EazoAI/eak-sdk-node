@@ -453,10 +453,19 @@ describe("EazoAgentKit", () => {
     ).rejects.toMatchObject({
       name: "EAKPermissionDeniedError",
       code: "eak.delegation.user_not_bound",
-      message: "userId is not valid for this EAK credential",
+      // The backend message is preserved, with an actionable onboarding hint appended.
+      message: expect.stringContaining("userId is not valid for this EAK credential"),
       status: 403,
       requestId: "req_user_not_bound",
     });
+    await expect(
+      client.delegateToken({
+        user: { id: "missing_user" },
+        agent: "memory_agent",
+        scopes: [EAKScopes.GUMEM_MEMORY_READ],
+        mode: "silent",
+      }),
+    ).rejects.toThrow(/resolveAnyBoundUser/);
   });
 
   it("keeps delegateAgent and completeDelegateAgent as deprecated compatibility aliases", async () => {
@@ -1466,6 +1475,67 @@ describe("EazoAgentKit", () => {
       EAKEventTypes.RUN_ACTION_STARTED,
       EAKEventTypes.RUN_COMPLETED,
     ]);
+  });
+
+  it("runAndWait drives a run to terminal and reports the settled outcome", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const actions: unknown[] = [];
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (url: URL | RequestInfo) => {
+        const u = String(url);
+        if (u.endsWith("/do_anything/sessions")) {
+          return jsonResponse({ data: { id: "sess_1" } });
+        }
+        if (u.endsWith("/sessions/sess_1/runs")) {
+          return jsonResponse({ data: { run_id: "run_1", session_id: "sess_1" } });
+        }
+        // events SSE: one action, then terminal completion.
+        return sseResponse(
+          'id: 1\ndata: {"type":"run.action.started","data":{"kind":"navigate"}}\n\n' +
+            'id: 2\ndata: {"type":"run.completed","data":{"terminal_reason":"done","is_task_successful":true,"output":"the title"}}\n\n',
+        );
+      }) as typeof fetch,
+    });
+
+    const result = await client.doAnything.runAndWait({
+      token,
+      instruction: "open the page and read the title",
+      onAction: (payload) => {
+        actions.push(payload.kind);
+      },
+    });
+
+    expect(result).toEqual({
+      runId: "run_1",
+      sessionId: "sess_1",
+      status: "succeeded",
+      terminalReason: "done",
+      isTaskSuccessful: true,
+      output: "the title",
+    });
+    expect(actions).toEqual(["navigate"]);
+  });
+
+  it("resolveAnyBoundUser returns the first user from the bound userpool", async () => {
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      eakBaseUrl: "https://eak.example.com",
+      genauthBaseUrl: "https://tenant-a.genauth.example.com",
+      fetch: (async (url: URL | RequestInfo) => {
+        if (String(url) === "https://eak.example.com/api/v3/eak/genauth/admin-token") {
+          return jsonResponse({ data: { accessToken: "admin", userPoolId: "up_1" } });
+        }
+        return jsonResponse({ data: { list: [{ userId: "user_real_1" }], totalCount: 1 } });
+      }) as typeof fetch,
+    });
+
+    expect(await client.resolveAnyBoundUser()).toBe("user_real_1");
   });
 
   it("maps permission errors to typed SDK errors", async () => {

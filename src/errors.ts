@@ -108,7 +108,7 @@ export function errorFromPayload(
     stringField(source, "message") ||
     stringField(source, "detail") ||
     fallbackMessage;
-  const message = appendUpstreamDescription(rawMessage, source);
+  const message = appendOnboardingHint(appendUpstreamDescription(rawMessage, source), code);
   const options: EAKErrorOptions = {
     code,
     status,
@@ -150,6 +150,22 @@ function appendUpstreamDescription(message: string, source: unknown): string {
     stringField(upstream, "error");
   if (!description || message.includes(description)) return message;
   return `${message}: ${description}`;
+}
+
+// Common first-run pitfalls get an actionable, one-line hint appended to the
+// error message so integrators aren't left guessing where to look.
+const ONBOARDING_HINTS: Record<string, string> = {
+  "eak.delegation.user_not_bound":
+    "Hint: the userId is not in the GenAuth userpool bound to this credential. " +
+    "Resolve a real user with eak.resolveAnyBoundUser() (demo/smoke) or eak.currentUser({ accessToken }).",
+  "eak.genauth.userpool_binding_missing":
+    "Hint: bind the EAK credential to a GenAuth userpool before calling genauth.users.*.",
+};
+
+function appendOnboardingHint(message: string, code: string): string {
+  const hint = ONBOARDING_HINTS[code];
+  if (!hint || message.includes(hint)) return message;
+  return `${message} ${hint}`;
 }
 
 function statusCodeToCode(status: number): string {

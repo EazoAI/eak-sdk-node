@@ -35,6 +35,17 @@ streaming. **Breaking** — see below.
 - Automatic SSE reconnect: `events()` resumes a dropped stream from the last
   event id (network / 5xx). Configure with the `sseMaxRetries` client option
   (default 5, `0` disables). User aborts and terminal 4xx are never retried.
+- `doAnything.runAndWait({ instruction, onAction, onScreenshot, onInputRequest,
+  timeoutMs, signal, ... })` — high-level helper that starts a run, drives its
+  event stream to a terminal state, and resolves a settled
+  `{ status, output, terminalReason, isTaskSuccessful, runId, sessionId }`.
+  Falls back to `getRun` if the stream closes without a terminal event.
+- `eak.resolveAnyBoundUser()` — returns a real user id from the credential-bound
+  GenAuth userpool, for demos / smoke tests that need a `userId` for silent
+  `delegateToken` without hardcoding one.
+- Onboarding hints: errors for `eak.delegation.user_not_bound` and
+  `eak.genauth.userpool_binding_missing` now append a one-line, actionable hint
+  to the message (e.g. pointing at `resolveAnyBoundUser` / `currentUser`).
 
 ## 0.1.0 - 2026-06-02
 
