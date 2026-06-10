@@ -37,6 +37,7 @@ const DEFAULT_EAK_HOST = "https://eak.eazo.ai/dashboard";
 export class EazoAgentKit {
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly sseMaxRetries: number;
   private readonly accessKey: string;
   private readonly secretKey: string;
   private readonly host: string;
@@ -64,6 +65,7 @@ export class EazoAgentKit {
     this.host = normalizeBaseUrl(host);
     this.fetchImpl = options.fetch ?? fetch;
     this.timeoutMs = options.timeoutMs ?? 30_000;
+    this.sseMaxRetries = options.sseMaxRetries ?? 5;
     const transport: EAKTransport = {
       eakJson: (...args) => this.eakJson(...args),
       genauthJson: (...args) => this.genauthJson(...args),
@@ -228,7 +230,12 @@ export class EazoAgentKit {
       this.webAgentPath(runtimeToken, path),
       { ...payload, token: runtimeToken, service: "webagent" },
     )) {
-      yield event;
+      // WebAgent run streams carry no SSE `event:` line — the wire event type
+      // lives in the envelope's `type` field. Surface it as `event.event` so
+      // callers can match against EAKEventTypes (e.g. RUN_COMPLETED) instead of
+      // reaching into the payload. `data` is left intact (envelope with
+      // `type` / `task_id` / `session_id` / `data`).
+      yield normalizeWebAgentEvent(event);
     }
   }
 
@@ -289,7 +296,44 @@ export class EazoAgentKit {
     return normalizeResponse<T>(payload, options.service);
   }
 
+  // Reconnecting wrapper: yields events from a fresh connection, and on a
+  // dropped stream (network/5xx, not a clean close or a user abort) reconnects
+  // with `last-event-id` so the backend replays from where we left off. Each
+  // attempt re-issues the GET with the same Bearer product token (no per-call
+  // AK/SK signature, so no gateway nonce replay). Caps at `sseMaxRetries`.
   private async *sseRequest<T>(
+    baseUrl: string,
+    pathname: string,
+    options: RequestPayload & {
+      token: string;
+      service: EAKService;
+      lastEventId?: string;
+      signal?: AbortSignal;
+    },
+  ): AsyncIterable<EAKEvent<T>> {
+    let lastEventId = options.lastEventId;
+    let attempt = 0;
+    for (;;) {
+      try {
+        for await (const event of this.sseConnectOnce<T>(baseUrl, pathname, {
+          ...options,
+          lastEventId,
+        })) {
+          if (event.id) lastEventId = event.id;
+          attempt = 0; // a delivered event proves the connection is healthy
+          yield event;
+        }
+        return; // server closed the stream cleanly — the run is over
+      } catch (err) {
+        if (options.signal?.aborted) throw err; // user abort — never retry
+        if (attempt >= this.sseMaxRetries || !isRetryableStreamError(err)) throw err;
+        attempt++;
+        await sleepWithAbort(sseBackoffMs(attempt), options.signal);
+      }
+    }
+  }
+
+  private async *sseConnectOnce<T>(
     baseUrl: string,
     pathname: string,
     options: RequestPayload & {
@@ -794,6 +838,56 @@ function nestedString(value: unknown, path: readonly string[]): string | undefin
     cursor = cursor[segment];
   }
   return typeof cursor === "string" && cursor.trim() ? cursor : undefined;
+}
+
+// WebAgent run events arrive as `id: <n>\ndata: <envelope>` with no SSE
+// `event:` line; the type is the envelope's `type` field. Lift it to
+// `event.event` so callers can match EAKEventTypes. Non-record / typed events
+// pass through unchanged.
+function normalizeWebAgentEvent<T>(event: EAKEvent<T>): EAKEvent<T> {
+  if (event.event) return event;
+  const data = event.data as { type?: unknown } | null | undefined;
+  if (data && typeof data === "object" && typeof data.type === "string") {
+    return { ...event, event: data.type };
+  }
+  return event;
+}
+
+// Retry on connection drops (ECONNRESET, fetch network errors) and transient
+// 5xx / 408 / 429. Never retry on user abort or terminal 4xx (auth / not found).
+function isRetryableStreamError(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const e = err as { name?: string; retryable?: boolean; status?: number };
+    if (e.name === "AbortError") return false;
+    if (typeof e.retryable === "boolean") return e.retryable;
+    if (typeof e.status === "number") {
+      return e.status >= 500 || e.status === 408 || e.status === 429;
+    }
+  }
+  return true; // unknown / network read error — reconnect
+}
+
+function sseBackoffMs(attempt: number): number {
+  const base = Math.min(500 * 2 ** (attempt - 1), 10_000);
+  return base + Math.floor(Math.random() * 250); // jitter
+}
+
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("The operation was aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(new DOMException("The operation was aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function parseSSEEvent<T>(chunk: string): EAKEvent<T> | null {

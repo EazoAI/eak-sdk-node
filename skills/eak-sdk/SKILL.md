@@ -126,33 +126,34 @@ Use `delegateToken` output for runtime capability namespaces:
 
 Pass both to `events`/`getRun`/`intervene`/`cancel` to address the run. Other envelope fields (status, output, costs, …) ride along under the result's index signature. Pass `stream.events: EAKEventType[]` to tell the backend which events to emit.
 
-Stream with `doAnything.events({ token, sessionId, runId, signal? })` — an `AsyncIterable<EAKEvent>` where each event is `{ id?, event, data }`. Match `event.event` against `EAKEventTypes` (use the constants, not raw strings):
+Stream with `doAnything.events({ token, sessionId, runId, signal?, lastEventId? })` — an `AsyncIterable<EAKEvent>` where each event is `{ id?, event, data }`. The backend frames carry the type in the envelope's `type` field (no SSE `event:` line); the SDK lifts it to **`event.event`**, so match `event.event` against `EAKEventTypes`. The envelope rides in `event.data`: the payload is `event.data.data`, and `event.data.task_id` / `event.data.session_id` identify the run.
 
-- `DO_ANYTHING_REASONING_DELTA` (`"reasoning_delta"`) — streaming reasoning text.
-- `DO_ANYTHING_ACTION` (`"action"`) — one agent action (navigate/click/type).
-- `DO_ANYTHING_OBSERVATION` (`"observation"`) — what the agent saw after an action.
-- `DO_ANYTHING_SCREENSHOT` (`"screenshot"`) — per-step still; fetch bytes via `doAnything.readArtifacts`.
-- `DO_ANYTHING_BROWSER_VIDEO_FRAME` (`"browser_video_frame"`) — live video frame.
-- `DO_ANYTHING_USER_ACTION_REQUIRED` (`"user_action_required"`) — a human is needed (login/confirm); see the Login Wall section.
-- `DO_ANYTHING_ARTIFACT` (`"artifact"`) — produced artifact reference.
-- `DO_ANYTHING_FINAL` (`"final"`) — terminal; the run is done, stop iterating.
+> `EAKEventTypes` are the real wire names (`run.*`), aligned with the backend `EventType` enum. The `stream.events` array on `run()` does NOT filter the stream — `events()` delivers every `run.*` event; filter client-side on `event.event`.
 
-Terminal detection: break when `event.event === EAKEventTypes.DO_ANYTHING_FINAL`. The final answer is in that event's `data` (for example `data.output`); the payload is product-specific, so read `data` rather than assuming a fixed field name. Bound wall-clock with `signal: AbortSignal.timeout(ms)`; a timeout/abort does not mean the run failed — the backend task may still be running.
+Key `event.event` values (`EAKEventTypes`):
+
+- `RUN_STATUS_CHANGED` (`run.status_changed`) — run lifecycle status changed.
+- `RUN_MESSAGE` (`run.message`) — an agent/user message.
+- `RUN_ACTION_STARTED` / `RUN_ACTION_COMPLETED` / `RUN_ACTION_FAILED` — one agent action.
+- `RUN_SCREENSHOT` (`run.screenshot`) — per-step still; `event.data.data.screenshot_url` is an inline `data:` URI.
+- `RUN_BROWSER_AGENT_VISION_DECISION` — per-step vision reasoning (high volume).
+- `RUN_INPUT_REQUEST` (`run.input_request`) — a human is needed (login / confirm); see the Login Wall section.
+- `RUN_BROWSER_LIVE_URL_CHANGED` — interactive live-browser URL changed (`event.data.data.live_url`).
+- `RUN_COST_UPDATE` (`run.cost_update`) — running cost.
+- `RUN_SUBTASK_STARTED` / `RUN_SUBTASK_GRADED` — sub-run lifecycle (one `run()` spawns internal sub-tasks).
+- `RUN_COMPLETED` (`run.completed`) — **TERMINAL**. Stop iterating. Outcome is in the payload: `event.data.data.terminal_reason` / `is_task_successful` / `output`.
+
+Terminal detection: break when `event.event === EAKEventTypes.RUN_COMPLETED`. Read the final answer from `event.data.data.output` (shape is task-specific). Bound wall-clock with `signal: AbortSignal.timeout(ms)`; a timeout/abort does NOT mean the run failed — the backend task may still be running.
+
+Sub-tasks: a single `run()` can emit events for internal sub-runs under different ids. To keep only your top-level run, compare `event.data.task_id` against your `run_id`.
+
+Reconnect: `events()` auto-reconnects a dropped stream (network / 5xx), resuming from the last event id; tune with the `sseMaxRetries` client option (default 5, `0` disables). User aborts (via `signal`) and terminal 4xx are never retried.
 
 ```ts
 const run = await eak.doAnything.run({
   token,
   instruction: "Open https://example.com and summarize the page, then finish.",
-  stream: {
-    events: [
-      EAKEventTypes.DO_ANYTHING_ACTION,
-      EAKEventTypes.DO_ANYTHING_OBSERVATION,
-      EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED,
-      EAKEventTypes.DO_ANYTHING_FINAL,
-    ],
-  },
 });
-
 const { run_id, session_id } = run.data;
 
 for await (const event of eak.doAnything.events({
@@ -161,8 +162,9 @@ for await (const event of eak.doAnything.events({
   runId: run_id,
   signal: AbortSignal.timeout(180_000),
 })) {
-  if (event.event === EAKEventTypes.DO_ANYTHING_FINAL) {
-    console.log("answer:", event.data);
+  const payload = (event.data as { data?: Record<string, unknown> }).data ?? {};
+  if (event.event === EAKEventTypes.RUN_COMPLETED) {
+    console.log("done:", payload.terminal_reason, payload.output);
     break;
   }
 }
@@ -170,20 +172,23 @@ for await (const event of eak.doAnything.events({
 
 ## Do Anything Login Wall (human handoff)
 
-A web task often hits a page only the end user can log in to. The agent parks and emits `DO_ANYTHING_USER_ACTION_REQUIRED` carrying an interactive live-browser URL at `event.data.live_url`. The client's ONLY job is to surface that URL so the human can sign in. Login detection is the BACKEND's job: it re-probes on its own timer and resumes the run automatically once login succeeds.
+A web task often hits a page only the end user can log in to. The agent parks and emits **`RUN_INPUT_REQUEST`** (`run.input_request`). The interactive live-browser URL arrives on **`RUN_BROWSER_LIVE_URL_CHANGED`** (`event.data.data.live_url`); `getRun` / the session-detail GET also carries the current `live_url` as a fallback. The client's ONLY job is to surface that URL so the human can sign in — login detection is the BACKEND's job; it re-probes and resumes the run automatically.
 
-- Open `live_url` ONCE in a real browser window for the user. Do NOT poll, do NOT call `intervene`, do NOT wait on the window closing.
-- Keep iterating the same event stream. The run progresses past the wall and reaches `DO_ANYTHING_FINAL` on its own once the user is signed in.
+- Capture `live_url` from `RUN_BROWSER_LIVE_URL_CHANGED`; open it ONCE in a real browser when you see `RUN_INPUT_REQUEST`. Do NOT poll, do NOT call `intervene`, do NOT wait on the window closing.
+- Keep iterating; the run progresses past the wall and reaches `RUN_COMPLETED` on its own once the user is signed in.
 - The first login is unavoidable; later runs reuse persisted login state and never reach this wall.
 
 ```ts
+let liveUrl = "";
 for await (const event of eak.doAnything.events({ token, sessionId, runId })) {
-  if (event.event === EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED) {
-    const liveUrl = (event.data as { live_url?: string }).live_url;
-    if (liveUrl) openBrowserForUser(liveUrl); // pop once; the run resumes by itself
-    continue;
+  const payload = (event.data as { data?: Record<string, unknown> }).data ?? {};
+  if (event.event === EAKEventTypes.RUN_BROWSER_LIVE_URL_CHANGED && payload.live_url) {
+    liveUrl = String(payload.live_url);
   }
-  if (event.event === EAKEventTypes.DO_ANYTHING_FINAL) break;
+  if (event.event === EAKEventTypes.RUN_INPUT_REQUEST && liveUrl) {
+    openBrowserForUser(liveUrl); // pop once; the backend resumes by itself
+  }
+  if (event.event === EAKEventTypes.RUN_COMPLETED) break;
 }
 ```
 

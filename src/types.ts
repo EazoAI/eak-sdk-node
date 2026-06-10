@@ -30,6 +30,12 @@ export interface EAKOptions {
   webAgentBaseUrl?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  /**
+   * Max automatic reconnect attempts for SSE streams (`events()`) after a
+   * dropped connection. Each reconnect resumes from the last seen event id
+   * via the `last-event-id` header. Defaults to 5; set 0 to disable.
+   */
+  sseMaxRetries?: number;
 }
 
 export interface EAKRuntimeConfig {

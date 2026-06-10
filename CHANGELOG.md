@@ -6,6 +6,36 @@ This project follows semantic versioning. Before `1.0.0`, minor versions may
 include SDK API changes, while patch versions are reserved for backward
 compatible fixes.
 
+## 0.2.0 - 2026-06-10
+
+Run-event handling now matches the live WebAgent backend, plus resilient
+streaming. **Breaking** — see below.
+
+### Breaking
+
+- `EAKEventTypes` now holds the real backend wire event names (`run.*`, e.g.
+  `RUN_COMPLETED = "run.completed"`, `RUN_ACTION_STARTED`, `RUN_INPUT_REQUEST`,
+  `RUN_BROWSER_LIVE_URL_CHANGED`), replacing the previous placeholder constants
+  (`DO_ANYTHING_FINAL = "final"`, `DO_ANYTHING_ACTION = "action"`, …) that never
+  matched a real run stream. Match `event.event` against the new constants;
+  `RUN_COMPLETED` is the terminal event.
+
+### Fixed
+
+- `doAnything.events()` (and the other product `events()` iterators) now surface
+  the wire event type on `event.event`. Backend run frames carry no SSE `event:`
+  line — the type lives in the envelope's `type` field — so `event.event` was
+  previously always `undefined`. The envelope still rides on `event.data`
+  (`event.data.data` is the payload; `event.data.task_id` identifies the run).
+- `doAnything.run()` returns a typed `DoAnythingRunResult` with canonical
+  snake_case `run_id` / `session_id` (no more `id` / `sessionId` guessing).
+
+### Added
+
+- Automatic SSE reconnect: `events()` resumes a dropped stream from the last
+  event id (network / 5xx). Configure with the `sseMaxRetries` client option
+  (default 5, `0` disables). User aborts and terminal 4xx are never retried.
+
 ## 0.1.0 - 2026-06-02
 
 Initial public release of `@eazo/eak`.

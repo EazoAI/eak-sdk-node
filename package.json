@@ -1,6 +1,6 @@
 {
   "name": "@eazo/eak",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "description": "Unified Node.js SDK for EAK Agent delegation, GUMem memory, and WebAgent automation.",
   "homepage": "https://github.com/EazoAI/eak-sdk-node#readme",
   "bugs": {

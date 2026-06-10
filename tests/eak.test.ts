@@ -1131,7 +1131,7 @@ describe("EazoAgentKit", () => {
       EAKScopes.DO_ANYTHING_STOP,
       EAKScopes.DO_ANYTHING_CONTROL,
     ]);
-    expect(EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME).toBe("browser_video_frame");
+    expect(EAKEventTypes.RUN_COMPLETED).toBe("run.completed");
   });
 
   it("uses canonical WebAgent scopes when exchanging delegation tokens", async () => {
@@ -1293,7 +1293,7 @@ describe("EazoAgentKit", () => {
     const run = await client.doAnything.run({
       token,
       instruction: "open the docs",
-      stream: { events: [EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME] },
+      stream: { events: [EAKEventTypes.RUN_SCREENSHOT] },
     });
 
     expect(run.data).toMatchObject({ id: "run_auto", session_id: "sess_auto" });
@@ -1303,7 +1303,7 @@ describe("EazoAgentKit", () => {
     ]);
     expect(bodies[1]).toMatchObject({
       instructions: "open the docs",
-      stream: { events: [EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME] },
+      stream: { events: [EAKEventTypes.RUN_SCREENSHOT] },
     });
   });
 
@@ -1369,6 +1369,102 @@ describe("EazoAgentKit", () => {
     expect(events).toEqual([
       { id: "1", event: "browser_video_frame", data: { frame: "https://frame" } },
       { id: "2", event: "final", data: "done" },
+    ]);
+  });
+
+  it("normalizes WebAgent run events: lifts envelope `type` to event.event", async () => {
+    // Real backend frames carry no SSE `event:` line — the type is in the
+    // envelope's `type` field. The SDK surfaces it as event.event.
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async () =>
+        sseResponse(
+          'id: 1\ndata: {"type":"run.action.started","task_id":"run_1","data":{"kind":"navigate"}}\n\n' +
+            'id: 2\ndata: {"type":"run.completed","task_id":"run_1","data":{"output":"hi","terminal_reason":"done"}}\n\n',
+        )) as typeof fetch,
+    });
+
+    const events = [];
+    for await (const event of client.doAnything.events({
+      token,
+      sessionId: "sess_1",
+      runId: "run_1",
+    })) {
+      events.push(event);
+    }
+
+    expect(events.map((e) => e.event)).toEqual([
+      EAKEventTypes.RUN_ACTION_STARTED,
+      EAKEventTypes.RUN_COMPLETED,
+    ]);
+    // data stays the full envelope (type / task_id / data all reachable).
+    expect((events[1].data as { type: string }).type).toBe("run.completed");
+    expect((events[1].data as { data: { output: string } }).data.output).toBe("hi");
+  });
+
+  it("auto-reconnects a dropped SSE stream and resumes from last-event-id", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const lastEventIds: (string | undefined)[] = [];
+    let call = 0;
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      sseMaxRetries: 3,
+      fetch: (async (_url: URL | RequestInfo, init?: RequestInit) => {
+        const headers = (init?.headers || {}) as Record<string, string>;
+        lastEventIds.push(headers["last-event-id"]);
+        call += 1;
+        if (call === 1) {
+          // First connection: deliver one frame, then drop mid-stream. `pull`
+          // (vs synchronous start) guarantees the frame is consumed before the
+          // error, matching a real ECONNRESET after some events arrived.
+          let pulls = 0;
+          const stream = new ReadableStream<Uint8Array>({
+            pull(controller) {
+              pulls += 1;
+              if (pulls === 1) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'id: 1\ndata: {"type":"run.action.started","data":{}}\n\n',
+                  ),
+                );
+              } else {
+                controller.error(new Error("ECONNRESET"));
+              }
+            },
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        // Reconnect: resume and complete.
+        return sseResponse(
+          'id: 2\ndata: {"type":"run.completed","data":{"output":"done"}}\n\n',
+        );
+      }) as typeof fetch,
+    });
+
+    const events = [];
+    for await (const event of client.doAnything.events({
+      token,
+      sessionId: "sess_1",
+      runId: "run_1",
+    })) {
+      events.push(event);
+    }
+
+    expect(call).toBe(2); // reconnected once
+    expect(lastEventIds).toEqual([undefined, "1"]); // resumed from last id
+    expect(events.map((e) => e.event)).toEqual([
+      EAKEventTypes.RUN_ACTION_STARTED,
+      EAKEventTypes.RUN_COMPLETED,
     ]);
   });
 

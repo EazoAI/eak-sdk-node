@@ -140,33 +140,28 @@ const memory = await eak.gumem.recall({
   query: "What user preferences should the assistant remember?",
 });
 
-const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
+const run = await eak.doAnything.run({
   token,
   instruction: "Open the customer website and summarize recent product updates.",
-  stream: {
-    events: [
-      EAKEventTypes.DO_ANYTHING_ACTION,
-      EAKEventTypes.DO_ANYTHING_OBSERVATION,
-      EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME,
-      EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED,
-      EAKEventTypes.DO_ANYTHING_FINAL,
-    ],
-  },
   context: { memory: memory.data },
 });
 
+// run.data is the run envelope: { run_id, session_id, ... }.
 for await (const event of eak.doAnything.events({
   token,
   sessionId: run.data.session_id,
   runId: run.data.run_id,
 })) {
-  if (event.event === EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME) {
-    renderBrowserFrame(event.data);
+  // The SDK lifts the wire event type to event.event; payload is event.data.data.
+  if (event.event === EAKEventTypes.RUN_SCREENSHOT) {
+    renderScreenshot(event.data);
   }
 
-  if (event.event === EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED) {
-    await showUserConfirmation(event.data);
+  if (event.event === EAKEventTypes.RUN_INPUT_REQUEST) {
+    await handleLoginOrConfirm(event.data); // open data.data.live_url for the user
   }
+
+  if (event.event === EAKEventTypes.RUN_COMPLETED) break;
 }
 ```
 
@@ -314,19 +309,9 @@ const context = await eak.gumem.recall({
 ### Do Anything
 
 ```ts
-const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
+const run = await eak.doAnything.run({
   token,
   instruction: "Open the user's selected product page and summarize updates relevant to their current task.",
-  stream: {
-    events: [
-      EAKEventTypes.DO_ANYTHING_ACTION,
-      EAKEventTypes.DO_ANYTHING_OBSERVATION,
-      EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME,
-      EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED,
-      EAKEventTypes.DO_ANYTHING_ARTIFACT,
-      EAKEventTypes.DO_ANYTHING_FINAL,
-    ],
-  },
   context: { memory: context.data },
 });
 

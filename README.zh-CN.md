@@ -135,33 +135,28 @@ const memory = await eak.gumem.recall({
   query: "执行客户调研前需要记住哪些用户偏好？",
 });
 
-const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
+const run = await eak.doAnything.run({
   token,
   instruction: "打开客户官网并总结最近的产品变化。",
-  stream: {
-    events: [
-      EAKEventTypes.DO_ANYTHING_ACTION,
-      EAKEventTypes.DO_ANYTHING_OBSERVATION,
-      EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME,
-      EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED,
-      EAKEventTypes.DO_ANYTHING_FINAL,
-    ],
-  },
   context: { memory: memory.data },
 });
 
+// run.data 是 run envelope:{ run_id, session_id, ... }。
 for await (const event of eak.doAnything.events({
   token,
-  sessionId: run.data.sessionId,
-  runId: run.data.id,
+  sessionId: run.data.session_id,
+  runId: run.data.run_id,
 })) {
-  if (event.event === EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME) {
-    renderBrowserFrame(event.data);
+  // SDK 把 wire 事件类型提升到 event.event;payload 在 event.data.data。
+  if (event.event === EAKEventTypes.RUN_SCREENSHOT) {
+    renderScreenshot(event.data);
   }
 
-  if (event.event === EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED) {
-    await showUserConfirmation(event.data);
+  if (event.event === EAKEventTypes.RUN_INPUT_REQUEST) {
+    await handleLoginOrConfirm(event.data); // 为用户打开 data.data.live_url
   }
+
+  if (event.event === EAKEventTypes.RUN_COMPLETED) break;
 }
 ```
 
@@ -311,26 +306,16 @@ const context = await eak.gumem.recall({
 ### Do Anything
 
 ```ts
-const run = await eak.doAnything.run<{ id: string; sessionId: string }>({
+const run = await eak.doAnything.run({
   token,
   instruction: "打开用户选择的产品页面，总结和当前任务相关的更新。",
-  stream: {
-    events: [
-      EAKEventTypes.DO_ANYTHING_ACTION,
-      EAKEventTypes.DO_ANYTHING_OBSERVATION,
-      EAKEventTypes.DO_ANYTHING_BROWSER_VIDEO_FRAME,
-      EAKEventTypes.DO_ANYTHING_USER_ACTION_REQUIRED,
-      EAKEventTypes.DO_ANYTHING_ARTIFACT,
-      EAKEventTypes.DO_ANYTHING_FINAL,
-    ],
-  },
   context: { memory: context.data },
 });
 
 await eak.doAnything.cancel({
   token,
-  sessionId: run.data.sessionId,
-  runId: run.data.id,
+  sessionId: run.data.session_id,
+  runId: run.data.run_id,
   reason: "用户停止任务",
 });
 ```
