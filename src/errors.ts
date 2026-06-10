@@ -135,7 +135,10 @@ export function errorFromPayload(
     stringField(source, "message") ||
     stringField(source, "detail") ||
     fallbackMessage;
-  const message = appendOnboardingHint(appendUpstreamDescription(rawMessage, source), code);
+  const message = appendOnboardingHint(
+    appendDeniedScopes(appendUpstreamDescription(rawMessage, source), source),
+    code,
+  );
   const options: EAKErrorOptions = {
     code,
     status,
@@ -166,6 +169,20 @@ function stringField(value: unknown, key: string): string | undefined {
   if (!isJsonObject(value)) return undefined;
   const field = (value as JsonObject)[key];
   return typeof field === "string" && field ? field : undefined;
+}
+
+// Surface denied/missing scopes inline so they aren't hidden behind a nested
+// `[Array]` in the error object — e.g. `scope_not_delegated` carries
+// `details.deniedScopes`. The caller sees exactly which scope to add.
+function appendDeniedScopes(message: string, source: unknown): string {
+  const details = isJsonObject(source) ? source.details : undefined;
+  const raw =
+    (isJsonObject(details) ? details.deniedScopes : undefined) ??
+    (isJsonObject(source) ? source.deniedScopes : undefined);
+  if (!Array.isArray(raw) || raw.length === 0) return message;
+  const scopes = raw.filter((s): s is string => typeof s === "string");
+  if (scopes.length === 0 || message.includes(scopes[0])) return message;
+  return `${message} (scopes not granted: ${scopes.join(", ")})`;
 }
 
 function appendUpstreamDescription(message: string, source: unknown): string {

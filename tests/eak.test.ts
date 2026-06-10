@@ -1668,6 +1668,30 @@ describe("EazoAgentKit", () => {
     } satisfies Partial<EAKPermissionDeniedError>);
   });
 
+  it("surfaces denied scopes inline in the error message", async () => {
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      gumemBaseUrl: "https://eak.example.com",
+      fetch: (async () =>
+        jsonResponse(
+          {
+            detail: {
+              code: "scope_not_delegated",
+              message: "One or more scopes were not granted",
+              details: { deniedScopes: ["webagent.deep_research:read"] },
+            },
+          },
+          { status: 403 },
+        )) as typeof fetch,
+    });
+
+    await expect(
+      client.gumem.recall({ token: "token", sessionId: "sess_1", query: "hello" }),
+    ).rejects.toThrow(/scopes not granted: webagent\.deep_research:read/);
+  });
+
   it("supports unstable raw requests through EAK host without exposing service selection", async () => {
     const seen: { url?: string; init?: RequestInit } = {};
     const client = new EazoAgentKit({
