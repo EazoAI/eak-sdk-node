@@ -98,6 +98,13 @@ export interface DoAnythingResult {
   isTaskSuccessful?: boolean;
   /** Final answer / output payload (shape is task-specific). */
   output?: unknown;
+  /**
+   * The full run envelope (settled from `getRun`) for fields not mapped above —
+   * `total_cost_usd`, `step_count`, `total_input_tokens`, etc. The `run.completed`
+   * event payload is leaner than the run-detail response, so `runAndWait` reads
+   * the canonical shape here.
+   */
+  raw?: JsonObject;
 }
 
 /**
@@ -111,6 +118,8 @@ export interface DoAnythingRunAndWaitInput extends DoAnythingRunInput {
   onScreenshot?: (payload: JsonObject, event: EAKEvent) => void | Promise<void>;
   /** Fires on `run.input_request` (login / confirm). `payload.live_url` is the live browser, when present. */
   onInputRequest?: (payload: JsonObject, event: EAKEvent) => void | Promise<void>;
+  /** Fires on `run.cost_update` — use for a live running-cost / budget guard. */
+  onCostUpdate?: (payload: JsonObject, event: EAKEvent) => void | Promise<void>;
   /** Client-side wall-clock cap. On elapse, resolves with status `timed_out` (does NOT cancel the backend run). */
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -138,8 +147,16 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
     // events() + RUN_COMPLETED detection + a getRun() fallback if the stream
     // closes without a terminal event. Use events() directly for fine control.
     runAndWait: async (input: DoAnythingRunAndWaitInput): Promise<DoAnythingResult> => {
-      const { onEvent, onAction, onScreenshot, onInputRequest, timeoutMs, signal, ...runInput } =
-        input;
+      const {
+        onEvent,
+        onAction,
+        onScreenshot,
+        onInputRequest,
+        onCostUpdate,
+        timeoutMs,
+        signal,
+        ...runInput
+      } = input;
       const run = await namespace.run<DoAnythingRunResult>(runInput as DoAnythingRunInput);
       const runId = String(run.data.run_id ?? "");
       const sessionId = String(run.data.session_id ?? "");
@@ -150,13 +167,15 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
       }
 
       const { signal: waitSignal, timedOut } = withTimeout(signal, timeoutMs);
-      let settled: DoAnythingResult | undefined;
+      let sawTerminal = false;
+      let terminalPayload: JsonObject = {};
       try {
         for await (const event of namespace.events<JsonObject>({
           token: input.token,
           sessionId,
           runId,
           signal: waitSignal,
+          onlyTopLevel: true, // sub-run events don't concern the caller's run
         })) {
           await onEvent?.(event);
           const payload = eventPayload(event);
@@ -164,8 +183,10 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
           else if (event.event === EAKEventTypes.RUN_SCREENSHOT) await onScreenshot?.(payload, event);
           else if (event.event === EAKEventTypes.RUN_INPUT_REQUEST)
             await onInputRequest?.(payload, event);
+          else if (event.event === EAKEventTypes.RUN_COST_UPDATE) await onCostUpdate?.(payload, event);
           else if (event.event === EAKEventTypes.RUN_COMPLETED) {
-            settled = settleRun(runId, sessionId, payload);
+            sawTerminal = true;
+            terminalPayload = payload;
             break;
           }
         }
@@ -173,10 +194,17 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         if (timedOut() && !signal?.aborted) return { runId, sessionId, status: "timed_out" };
         throw err; // user abort or non-retryable stream error
       }
-      if (settled) return settled;
-      // Stream closed without a terminal event — fall back to run-detail status.
-      const detail = await namespace.getRun<JsonObject>({ token: input.token, sessionId, runId });
-      return settleRun(runId, sessionId, detail.data);
+      // Settle from the run-detail envelope, not the leaner run.completed payload,
+      // so the result carries the canonical shape (total_cost_usd, step_count,
+      // tokens, …) on `result.raw`. Fall back to the terminal event payload if
+      // getRun is unavailable.
+      try {
+        const detail = await namespace.getRun<JsonObject>({ token: input.token, sessionId, runId });
+        return settleRun(runId, sessionId, detail.data);
+      } catch (err) {
+        if (sawTerminal) return settleRun(runId, sessionId, terminalPayload);
+        throw err;
+      }
     },
 
     createSession: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
@@ -210,22 +238,37 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         },
       ),
 
-    events: <T = unknown>(
+    events: async function* <T = unknown>(
       input: RuntimeTokenInput & {
         sessionId: string;
         runId?: string;
         lastEventId?: string;
         signal?: AbortSignal;
+        /**
+         * Drop events for internal sub-runs (planning / grading) and yield only
+         * the top-level run's events. Requires `runId`; matches on
+         * `event.data.task_id`. Default false.
+         */
+        onlyTopLevel?: boolean;
+        onReconnect?: (info: { attempt: number; lastEventId?: string; error: unknown }) => void;
       },
-    ): AsyncIterable<EAKEvent<T>> => {
+    ): AsyncIterable<EAKEvent<T>> {
       const path = input.runId
         ? `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}/events`
         : `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/events`;
-      return transport.webAgentSSE(path, input.token, {
+      const stream = transport.webAgentSSE<T>(path, input.token, {
         lastEventId: input.lastEventId,
         requiredScopes: ["webagent.do_anything:read"],
         signal: input.signal,
+        onReconnect: input.onReconnect,
       });
+      for await (const event of stream) {
+        if (input.onlyTopLevel && input.runId) {
+          const taskId = envelopeTaskId(event);
+          if (taskId && taskId !== input.runId) continue; // skip sub-run events
+        }
+        yield event;
+      }
     },
 
     intervene: <T = unknown>(
@@ -301,6 +344,15 @@ function normalizeDoAnythingRunInput(input: JsonObject): JsonObject {
 // carries `session_id`, but guarantee it for any backend that omits it so the
 // merged result always has both ids. Inject under the canonical snake_case key
 // (NOT camelCase) so callers read one consistent `session_id` field.
+// The run/task id on a WebAgent run event envelope (`event.data.task_id`) —
+// used to tell a top-level run's events from its internal sub-runs.
+function envelopeTaskId(event: EAKEvent): string | undefined {
+  const env = event.data as { task_id?: unknown } | null | undefined;
+  return env && typeof env === "object" && typeof env.task_id === "string"
+    ? env.task_id
+    : undefined;
+}
+
 // The per-event payload (`event.data.data`) for WebAgent run events.
 function eventPayload(event: EAKEvent): JsonObject {
   const envelope = event.data as { data?: unknown } | null | undefined;
@@ -319,7 +371,7 @@ function settleRun(runId: string, sessionId: string, p: JsonObject): DoAnythingR
   else if (terminalReason === "failed" || terminalReason === "expired" || isTaskSuccessful === false)
     status = "failed";
   else status = "succeeded";
-  return { runId, sessionId, status, terminalReason, isTaskSuccessful, output: p.output };
+  return { runId, sessionId, status, terminalReason, isTaskSuccessful, output: p.output, raw: p };
 }
 
 // Combine an optional user signal with an optional wall-clock timeout into one

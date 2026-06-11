@@ -5,6 +5,13 @@ description: Use when building, testing, debugging, or documenting Node.js integ
 
 # EAK SDK
 
+> **Requires `@eazo/eak` ≥ 0.2.0.** This guide documents 0.2.0 behavior
+> (snake_case `run_id`/`session_id`, real `run.*` event constants on
+> `event.event`, SSE auto-reconnect, `runAndWait`). If the consumer resolves an
+> older version from npm, install this repo's local build instead
+> (`npm install <path-to-eak-sdk-node>` or a `pnpm pack` tarball) until ≥ 0.2.0
+> is published — otherwise the code below will not match the installed SDK.
+
 ## Core Contract
 
 Use `@eazo/eak` from trusted server-side Node.js code. Keep AK/SK on the server and create one reusable `EazoAgentKit`. For silent runtime product calls, resolve a real GenAuth user id from the credential-bound userpool, call `delegateToken`, then pass `delegation.data.token` explicitly to every product capability call. For interactive runtime authorization, call `delegateToken({ mode: "interactive", redirectUri, state, agent, scopes })` from the server without exposing AK/SK; redirect the user to `authorizationUrl`, then handle the business callback server-side with `completeDelegateToken({ grantId, code, state })` to receive the token. For GenAuth user management, call `eak.genauth.users.*`; the SDK exchanges AK/SK for a standard GenAuth management token internally and does not require `EAK_USER_ID`.
@@ -128,15 +135,18 @@ back to `getRun` if the stream closes without a terminal event.
 const result = await eak.doAnything.runAndWait({
   token,
   instruction: "Open https://example.com and summarize the page, then finish.",
-  timeoutMs: 180_000,                                  // client cap; status "timed_out" on elapse
-  onAction: (p) => console.log("action:", p),          // run.action.started payloads
+  timeoutMs: 180_000,                                   // client cap; status "timed_out" on elapse
+  onAction: (p) => console.log("action:", p),           // run.action.started payloads
   onInputRequest: (p) => openBrowserForUser(p.live_url),// login / confirm — surface the live browser
+  onCostUpdate: (p) => budgetGuard(p),                  // live running cost (run.cost_update)
 });
 // result: { runId, sessionId, status: "succeeded"|"failed"|"canceled"|"timed_out",
-//           terminalReason?, isTaskSuccessful?, output? }
+//           terminalReason?, isTaskSuccessful?, output?, raw? }
+// result.raw is the full getRun envelope — total_cost_usd, step_count, tokens, … live there
+// (the run.completed event payload is leaner and omits them).
 ```
 
-Use `run` + `events` (below) only when you need fine-grained control of the stream.
+`runAndWait` filters to the top-level run (sub-run events don't fire your hooks) and settles from the `getRun` envelope, so `result.raw` always carries cost / step / token fields. Use `run` + `events` (below) only when you need fine-grained control of the stream.
 
 ## Do Anything Runtime Shapes
 
@@ -147,24 +157,24 @@ Use `run` + `events` (below) only when you need fine-grained control of the stre
 
 Pass both to `events`/`getRun`/`intervene`/`cancel` to address the run. Other envelope fields (status, output, costs, …) ride along under the result's index signature. Pass `stream.events: EAKEventType[]` to tell the backend which events to emit.
 
-Stream with `doAnything.events({ token, sessionId, runId, signal?, lastEventId? })` — an `AsyncIterable<EAKEvent>` where each event is `{ id?, event, data }`. The backend frames carry the type in the envelope's `type` field (no SSE `event:` line); the SDK lifts it to **`event.event`**, so match `event.event` against `EAKEventTypes`. The envelope rides in `event.data`: the payload is `event.data.data`, and `event.data.task_id` / `event.data.session_id` identify the run.
+Stream with `doAnything.events({ token, sessionId, runId, signal?, lastEventId?, onlyTopLevel? })` — an `AsyncIterable<EAKEvent>` where each event is `{ id?, event, data }`. The backend frames carry the type in the envelope's `type` field (no SSE `event:` line); the SDK lifts it to **`event.event`**, so match `event.event` against `EAKEventTypes`. The envelope rides in `event.data`: the payload is `event.data.data`, and `event.data.task_id` / `event.data.session_id` identify the run. Pass `onlyTopLevel: true` (with `runId`) to drop internal sub-run events and keep just your run's. The stream auto-reconnects on drops (network / 5xx / expired-token 401, resuming from the last event id); tune with `sseMaxRetries`.
 
 > `EAKEventTypes` are the real wire names (`run.*`), aligned with the backend `EventType` enum. The `stream.events` array on `run()` does NOT filter the stream — `events()` delivers every `run.*` event; filter client-side on `event.event`.
 
 Key `event.event` values (`EAKEventTypes`):
 
-- `RUN_STATUS_CHANGED` (`run.status_changed`) — run lifecycle status changed.
+- `RUN_STATUS_CHANGED` (`run.status_changed`) — the NEW status is `event.data.data.to` (NOT `.status`); `.from` is the previous status. The first event is the synthetic `from=null, to="pending"` (task born), so reading `.status` yields `undefined`.
 - `RUN_MESSAGE` (`run.message`) — an agent/user message.
 - `RUN_ACTION_STARTED` / `RUN_ACTION_COMPLETED` / `RUN_ACTION_FAILED` — one agent action.
-- `RUN_SCREENSHOT` (`run.screenshot`) — per-step still; `event.data.data.screenshot_url` is an inline `data:` URI.
+- `RUN_SCREENSHOT` (`run.screenshot`) — per-step still; `event.data.data.screenshot_url` is an inline `data:` URI (large; for production prefer pulling stills/recording afterward via `readArtifacts` / `readRecording` rather than retaining every inline frame).
 - `RUN_BROWSER_AGENT_VISION_DECISION` — per-step vision reasoning (high volume).
 - `RUN_INPUT_REQUEST` (`run.input_request`) — a human is needed (login / confirm); see the Login Wall section.
 - `RUN_BROWSER_LIVE_URL_CHANGED` — interactive live-browser URL changed (`event.data.data.live_url`).
-- `RUN_COST_UPDATE` (`run.cost_update`) — running cost.
+- `RUN_COST_UPDATE` (`run.cost_update`) — running cost; subscribe for a live budget guard.
 - `RUN_SUBTASK_STARTED` / `RUN_SUBTASK_GRADED` — sub-run lifecycle (one `run()` spawns internal sub-tasks).
 - `RUN_COMPLETED` (`run.completed`) — **TERMINAL**. Stop iterating. Outcome is in the payload: `event.data.data.terminal_reason` / `is_task_successful` / `output`.
 
-Terminal detection: break when `event.event === EAKEventTypes.RUN_COMPLETED`. Read the final answer from `event.data.data.output` (shape is task-specific). Bound wall-clock with `signal: AbortSignal.timeout(ms)`; a timeout/abort does NOT mean the run failed — the backend task may still be running.
+Terminal detection: break when `event.event === EAKEventTypes.RUN_COMPLETED`. Read the final answer from `event.data.data.output` (shape is task-specific). The `run.completed` payload is lean — **`total_cost_usd` / `step_count` / token counts are NOT in it**; call `getRun` (or use `runAndWait`, whose `result.raw` is the `getRun` envelope) for those. Bound wall-clock with `signal: AbortSignal.timeout(ms)`; a timeout/abort does NOT mean the run failed — the backend task may still be running.
 
 Sub-tasks: a single `run()` can emit events for internal sub-runs under different ids. To keep only your top-level run, compare `event.data.task_id` against your `run_id`.
 

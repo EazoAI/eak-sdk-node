@@ -223,7 +223,11 @@ export interface EAKTransport {
   webAgentSSE<T>(
     path: string,
     token?: string,
-    payload?: RequestPayload & { lastEventId?: string; signal?: AbortSignal },
+    payload?: RequestPayload & {
+      lastEventId?: string;
+      signal?: AbortSignal;
+      onReconnect?: (info: { attempt: number; lastEventId?: string; error: unknown }) => void;
+    },
   ): AsyncIterable<EAKEvent<T>>;
 }
 
