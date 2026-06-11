@@ -24,15 +24,6 @@ export type {
   SnapshotAction,
 } from "./do-anything";
 export type {
-  EAKCredentialCreateInput,
-  EAKCredentialListInput,
-  EAKCredentialRotateInput,
-  EAKCredentialUpdateInput,
-  EAKWorkspaceCreateInput,
-  EAKWorkspaceGetInput,
-  EAKWorkspaceUpdateInput,
-} from "./eak";
-export type {
   GenAuthAccessTokenInput,
   GenAuthAdminToken,
   GenAuthAdminTokenOverrideInput,

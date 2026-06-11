@@ -34,7 +34,7 @@ export function createTrackNamespace(transport: EAKTransport) {
       ),
 
     events: <T = unknown>(
-      input: RuntimeTokenInput & { monitorId: string; lastEventId?: string },
+      input: RuntimeTokenInput & { monitorId: string; lastEventId?: string; signal?: AbortSignal },
     ): AsyncIterable<EAKEvent<T>> =>
       transport.webAgentSSE(
         `/track/monitors/${encodeURIComponent(input.monitorId)}/events`,
@@ -42,6 +42,7 @@ export function createTrackNamespace(transport: EAKTransport) {
         {
           lastEventId: input.lastEventId,
           requiredScopes: ["webagent.track:read"],
+          signal: input.signal,
         },
       ),
 

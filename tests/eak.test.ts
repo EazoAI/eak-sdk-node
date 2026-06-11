@@ -724,40 +724,6 @@ describe("EazoAgentKit", () => {
     ]);
   });
 
-  it("exposes EAK workspace and AK/SK management helpers without sending agent allowlists", async () => {
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const client = new EazoAgentKit({
-      accessKey: "ak_test",
-      secretKey: "sk_test",
-      host: "https://eak.example.com",
-      eakBaseUrl: "https://eak.example.com",
-      fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
-        calls.push({ url: String(url), init });
-        return jsonResponse({ data: { ok: true } });
-      }) as typeof fetch,
-    });
-
-    await client.eak.workspaces.list({ token: "genauth-access-token" });
-    await client.eak.credentials.create({
-      token: "genauth-access-token",
-      eakTenantId: "eak_tnt_1",
-      allowedScopes: [EAKScopes.GUMEM_MEMORY_READ],
-      allowedAgents: ["do_anything"],
-    } as any);
-
-    expect(calls.map((call) => call.url)).toEqual([
-      "https://eak.example.com/api/v3/eak/tenants",
-      "https://eak.example.com/api/v3/eak/tenants/eak_tnt_1/credentials",
-    ]);
-    expect((calls[0].init?.headers as Record<string, string>).authorization).toBe(
-      "Bearer genauth-access-token",
-    );
-    expect(calls[1].init?.method).toBe("POST");
-    expect(JSON.parse(String(calls[1].init?.body))).toEqual({
-      allowedScopes: [EAKScopes.GUMEM_MEMORY_READ],
-    });
-  });
-
   it("discovers runtime service URLs from the configured host and routes calls to returned services", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const calls: Array<{ url: string; init?: RequestInit }> = [];
