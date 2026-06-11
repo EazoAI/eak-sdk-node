@@ -1237,29 +1237,6 @@ describe("EazoAgentKit", () => {
     });
   });
 
-  it("maps webSearch refine message alias to backend text", async () => {
-    const token = jwt({ webagent_tenant_id: "tenant_1" });
-    const seen: { body?: unknown } = {};
-    const client = new EazoAgentKit({
-      accessKey: "ak_test",
-      secretKey: "sk_test",
-      host: "https://eak.example.com",
-      webAgentBaseUrl: "https://eak.example.com",
-      fetch: (async (_url: URL | RequestInfo, init?: RequestInit) => {
-        seen.body = JSON.parse(String(init?.body));
-        return jsonResponse({ data: { ok: true } });
-      }) as typeof fetch,
-    });
-
-    await client.webSearch.refine({
-      token,
-      runId: "run_1",
-      message: "keep SDK results only",
-    });
-
-    expect(seen.body).toEqual({ text: "keep SDK results only" });
-  });
-
   it("reads doAnything artifacts from the session-scoped /sessions/{id}/artifacts/{id} route", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const seen: { url?: string; init?: RequestInit } = {};
@@ -1771,7 +1748,7 @@ describe("EazoAgentKit", () => {
   // WebSearch
   // -------------------------------------------------------------------------
 
-  it("routes webSearch read/refine/cancel to the project-scoped run endpoints", async () => {
+  it("routes webSearch read/cancel to the project-scoped run endpoints", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
     const client = new EazoAgentKit({
@@ -1790,13 +1767,11 @@ describe("EazoAgentKit", () => {
     });
 
     await client.webSearch.get({ token, runId: "run_1" });
-    await client.webSearch.refine({ token, runId: "run_1", message: "narrow to 2025" });
     await client.webSearch.cancel({ token, runId: "run_1", reason: "duplicate" });
 
     const base = "https://eak.example.com/api/v1/projects/tenant_1/web_search/runs/run_1";
     expect(calls).toEqual([
       { url: base, method: "GET", body: undefined },
-      { url: `${base}/messages`, method: "POST", body: { text: "narrow to 2025" } },
       { url: `${base}/cancel`, method: "POST", body: { reason: "duplicate" } },
     ]);
   });

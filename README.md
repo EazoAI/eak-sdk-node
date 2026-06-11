@@ -430,7 +430,7 @@ import { EAK, EazoAgentKit } from "@eazo/eak";
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
 | Do Anything | `run`, `runAndWait`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
 | Deep Research | `run`, `get`, `events`, `followUp`, `intervene`, `cancel`, `feedback`, `listArtifacts`, `getArtifact` |
-| Web Search | `run`, `get`, `refine`, `events`, `cancel` |
+| Web Search | `run`, `get`, `events`, `cancel` |
 | Track | `createMonitor`, `getMonitor`, `updateMonitor`, `deleteMonitor`, `runNow`, `events` |
 
 Browser Use and Site Login scopes are reserved until their product runtime SDK methods are exported.

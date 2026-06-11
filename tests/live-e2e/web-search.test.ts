@@ -1,4 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { EAKError } from "../../src";
 import {
   allowLiveEnvironmentConstraint,
   collectSomeEvents,
@@ -6,7 +9,6 @@ import {
   extractId,
   liveE2EEnabled,
   liveClient,
-  livePrefix,
   webSearchScopes,
 } from "./helpers";
 
@@ -35,7 +37,11 @@ describeLiveE2E("live e2e: Web Search", () => {
       const run = await allowLiveEnvironmentConstraint(
         client.webSearch.run({
           token,
-          query: `${livePrefix} EAK SDK`,
+          // A real, evergreen query that search engines can always match.
+          // Do NOT embed livePrefix here: engines tokenize the nonce into
+          // noise ("sdk", "live") and return 0 hits or junk nondeterministically;
+          // run traceability comes from runId, not the query text.
+          query: "EAK SDK quickstart guide",
           maxResultsPerQuery: 1,
           siteWhitelist: ["eazo.ai", "authing.cn"],
         }),
@@ -59,12 +65,6 @@ describeLiveE2E("live e2e: Web Search", () => {
     expect(run.data).toBeTruthy();
   });
 
-  it("webSearch.refine({ message })", async () => {
-    const id = await ensureRun();
-    if (!id) return;
-    await client.webSearch.refine({ token, runId: id, message: "只保留和 SDK 使用相关的结果" });
-  });
-
   it("webSearch.events({ runId, signal })", async () => {
     const id = await ensureRun();
     if (!id) return;
@@ -74,10 +74,51 @@ describeLiveE2E("live e2e: Web Search", () => {
     );
   });
 
+  // Same recording pattern as do-anything: persist the raw event stream under
+  // .secrets/runs/web_search-<runId>/ (override with EAK_OUT_DIR) and echo
+  // each event to the console as it arrives.
+  it("records the event stream to disk", async () => {
+    const id = await ensureRun();
+    if (!id) return;
+    const outDir =
+      process.env.EAK_OUT_DIR || path.join(process.cwd(), ".secrets", "runs", `web_search-${id}`);
+    fs.mkdirSync(outDir, { recursive: true });
+    const eventsFile = path.join(outDir, "events.jsonl");
+    fs.writeFileSync(eventsFile, ""); // truncate any prior run's log
+    console.log(`recording run ${id} → ${outDir}`);
+
+    let total = 0;
+    const signal = AbortSignal.timeout(
+      Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 60_000),
+    );
+    try {
+      for await (const ev of client.webSearch.events({ token, runId: id, signal })) {
+        total++;
+        fs.appendFileSync(
+          eventsFile,
+          JSON.stringify({ receivedAt: new Date().toISOString(), ...ev }) + "\n",
+        );
+        const type = String(ev.event || "");
+        console.log(`  [${type}] ${JSON.stringify(ev.data ?? {}).slice(0, 110)}`);
+        if (type === "run.completed" || type === "run.failed") break;
+      }
+    } catch (error) {
+      if (!signal.aborted) throw error;
+    }
+    console.log(`recorded ${total} events → ${eventsFile}`);
+    expect(total).toBeGreaterThan(0);
+  });
+
   it("webSearch.cancel({ runId, reason })", async () => {
     const id = await ensureRun();
     if (!id) return;
-    await client.webSearch.cancel({ token, runId: id, reason: "sdk live e2e cleanup" });
+    try {
+      await client.webSearch.cancel({ token, runId: id, reason: "sdk live e2e cleanup" });
+    } catch (error) {
+      // The recording test may have ridden the run to its terminal event —
+      // canceling a finished run 4xxes. Accept that.
+      if (!(error instanceof EAKError) || (error.status ?? 0) < 400) throw error;
+    }
     canceled = true;
   });
 });

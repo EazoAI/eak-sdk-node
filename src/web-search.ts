@@ -18,19 +18,6 @@ export function createWebSearchNamespace(transport: EAKTransport) {
         },
       ),
 
-    refine: <T = unknown>(
-      input: RuntimeTokenInput & { runId: string } & JsonObject,
-    ): Promise<EAKResponse<T>> =>
-      transport.webAgentJson(
-        "POST",
-        `/web_search/runs/${encodeURIComponent(input.runId)}/messages`,
-        input.token,
-        {
-          body: normalizeWebSearchRefineInput(omit(input, "token", "runId")),
-          requiredScopes: ["webagent.web_search:run"],
-        },
-      ),
-
     events: <T = unknown>(
       input: RuntimeTokenInput & { runId: string; lastEventId?: string; signal?: AbortSignal },
     ): AsyncIterable<EAKEvent<T>> =>
@@ -69,11 +56,6 @@ function normalizeWebSearchRunInput(input: JsonObject): JsonObject {
     body.queries = [body.query];
   }
   delete body.query;
-  return body;
-}
-
-function normalizeWebSearchRefineInput(input: JsonObject): JsonObject {
-  const body = renameKeys(input, { message: "text" });
   return body;
 }
 

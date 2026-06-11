@@ -513,7 +513,7 @@ describe("complete public method coverage matrix", () => {
   });
 
   describe("webSearch/doAnything/track/deepResearch", () => {
-    describe("webSearch.run/get/refine/events/cancel", () => {
+    describe("webSearch.run/get/events/cancel", () => {
       it("covers run sugar and all follow-up methods", async () => {
         const h = createHarness();
         const token = delegationToken();
@@ -526,7 +526,6 @@ describe("complete public method coverage matrix", () => {
           siteBlacklist: ["example.net"],
         });
         await h.client.webSearch.get({ token, runId: "run_matrix" });
-        await h.client.webSearch.refine({ token, runId: "run_matrix", message: "narrow it" });
         for await (const _event of h.client.webSearch.events({ token, runId: "run_matrix", lastEventId: "0" })) {
           break;
         }
@@ -545,11 +544,6 @@ describe("complete public method coverage matrix", () => {
             },
           },
           { pathname: "/api/v1/projects/tenant_matrix/web_search/runs/run_matrix", method: "GET" },
-          {
-            pathname: "/api/v1/projects/tenant_matrix/web_search/runs/run_matrix/messages",
-            method: "POST",
-            body: { text: "narrow it" },
-          },
           {
             pathname: "/api/v1/projects/tenant_matrix/web_search/runs/run_matrix/events",
             method: "GET",

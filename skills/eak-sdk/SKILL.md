@@ -119,7 +119,7 @@ await eak.genauth.users.create({
 Use `delegateToken` output for runtime capability namespaces:
 
 - `gumem.createSession`, `gumem.addMessages`, `gumem.recall`, `gumem.uploadResource`, `gumem.actions.*`
-- `webSearch.run/get/refine/events/cancel`
+- `webSearch.run/get/events/cancel`
 - `doAnything.run/createSession/createRun/getRun/events/intervene/cancel/readArtifacts/readRecording`
 - `deepResearch.run/get/events/followUp/intervene/cancel/feedback/listArtifacts/getArtifact`
 - `track.createMonitor/getMonitor/updateMonitor/deleteMonitor/runNow/events`
