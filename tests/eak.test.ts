@@ -1178,6 +1178,10 @@ describe("EazoAgentKit", () => {
     await client.webSearch.run({ token: delegationToken, query: "EAK" });
     await client.webSearch.get({ token: delegationToken, runId: "search_1" });
     await client.webSearch.cancel({ token: delegationToken, runId: "search_1" });
+    await client.deepResearch.run({ token: delegationToken, topic: "EAK" });
+    await client.deepResearch.get({ token: delegationToken, runId: "research_1" });
+    await client.deepResearch.cancel({ token: delegationToken, runId: "research_1" });
+    await client.deepResearch.followUp({ token: delegationToken, runId: "research_1", text: "more" });
     await client.track.createMonitor({ token: delegationToken, url: "https://example.com" });
     await client.track.getMonitor({ token: delegationToken, monitorId: "monitor_1" });
     await client.track.runNow({ token: delegationToken, monitorId: "monitor_1" });
@@ -1192,6 +1196,10 @@ describe("EazoAgentKit", () => {
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:run"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:read"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:stop"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.deep_research:run"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.deep_research:read"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.deep_research:stop"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.deep_research:control"] },
       // createMonitor → track:manage. getMonitor → track:read. runNow → track:run.
       // deleteMonitor + updateMonitor also need track:manage but reuse the cached
       // product token from createMonitor, so they trigger no further exchange.

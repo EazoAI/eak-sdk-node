@@ -20,7 +20,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         `/deep_research/runs/${encodeURIComponent(input.runId)}`,
         input.token,
         {
-          requiredScopes: ["webagent.deep_research:read_artifacts"],
+          requiredScopes: ["webagent.deep_research:read"],
         },
       ),
 
@@ -32,7 +32,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           lastEventId: input.lastEventId,
-          requiredScopes: ["webagent.deep_research:read_artifacts"],
+          requiredScopes: ["webagent.deep_research:read"],
           signal: input.signal,
         },
       ),
@@ -46,7 +46,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: renameKeys(omit(input, "token", "runId"), { requestId: "request_id" }),
-          requiredScopes: ["webagent.deep_research:intervene"],
+          requiredScopes: ["webagent.deep_research:control"],
         },
       ),
 
@@ -59,7 +59,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: omit(input, "token", "runId"),
-          requiredScopes: ["webagent.deep_research:intervene"],
+          requiredScopes: ["webagent.deep_research:control"],
         },
       ),
 
@@ -72,7 +72,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: {},
-          requiredScopes: ["webagent.deep_research:cancel"],
+          requiredScopes: ["webagent.deep_research:stop"],
         },
       ),
 
@@ -85,7 +85,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: renameKeys(omit(input, "token", "runId"), { feedbackText: "feedback_text" }),
-          requiredScopes: ["webagent.deep_research:intervene"],
+          requiredScopes: ["webagent.deep_research:control"],
         },
       ),
 
@@ -97,7 +97,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         `/deep_research/runs/${encodeURIComponent(input.runId)}/artifacts`,
         input.token,
         {
-          requiredScopes: ["webagent.deep_research:read_artifacts"],
+          requiredScopes: ["webagent.deep_research:read"],
         },
       ),
 
@@ -109,7 +109,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         `/deep_research/runs/${encodeURIComponent(input.runId)}/artifacts/${encodeURIComponent(input.artifactId)}`,
         input.token,
         {
-          requiredScopes: ["webagent.deep_research:read_artifacts"],
+          requiredScopes: ["webagent.deep_research:read"],
         },
       ),
   };
