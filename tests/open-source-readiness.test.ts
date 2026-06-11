@@ -46,7 +46,7 @@ describe("open-source readiness", () => {
     expect(pkg.publishConfig).toEqual({ access: "public" });
     expect(pkg.scripts).toMatchObject({
       "test:mock": "vitest run --coverage=false tests/eak.test.ts tests/open-source-readiness.test.ts tests/complete-coverage.test.ts",
-      "test:live:e2e": "EAK_LIVE_E2E=1 vitest run --coverage=false tests/live-e2e/*.test.ts",
+      "test:live:e2e": "EAK_LIVE_E2E=1 vitest run --coverage=false --fileParallelism=false --maxWorkers=1 --testTimeout=120000 tests/live-e2e/*.test.ts",
       "test:package": "vitest run --coverage=false tests/package-surface.test.ts",
       "test:ci": "pnpm test:mock",
       "pack:dry-run": "pnpm build && pnpm pack --dry-run",
