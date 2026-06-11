@@ -165,6 +165,10 @@ export function timeoutError(cause: unknown): EAKTimeoutError {
   return new EAKTimeoutError("EAK request timed out", { cause });
 }
 
+export function networkError(cause: unknown): EAKUpstreamError {
+  return new EAKUpstreamError("EAK network request failed", { cause });
+}
+
 function stringField(value: unknown, key: string): string | undefined {
   if (!isJsonObject(value)) return undefined;
   const field = (value as JsonObject)[key];

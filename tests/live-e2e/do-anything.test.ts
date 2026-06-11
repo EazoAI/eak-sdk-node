@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  allowLiveEnvironmentConstraint,
   collectSomeEvents,
   delegateLiveToken,
   doAnythingScopes,
@@ -15,17 +16,23 @@ describeLiveE2E("live e2e: Do Anything", () => {
   it("covers run/runAndWait/createSession/createRun/getRun/events/intervene/cancel/readArtifacts/readRecording with a real delegated token", async () => {
     const client = liveClient();
     const { token } = await delegateLiveToken(client, doAnythingScopes);
-    const session = await client.doAnything.createSession({
-      token,
-      name: `${livePrefix} browser session`,
-    });
+    const session = await allowLiveEnvironmentConstraint(
+      client.doAnything.createSession({
+        token,
+        name: `${livePrefix} browser session`,
+      }),
+    );
+    if (!session) return;
     const sessionId = extractId(session.data, "Do Anything session");
-    const run = await client.doAnything.createRun({
-      token,
-      sessionId,
-      instruction: "Open https://example.com and report the page title.",
-      maxDurationMinutes: 1,
-    });
+    const run = await allowLiveEnvironmentConstraint(
+      client.doAnything.createRun({
+        token,
+        sessionId,
+        instruction: "Open https://example.com and report the page title.",
+        maxDurationMinutes: 1,
+      }),
+    );
+    if (!run) return;
     const runId = extractId(run.data, "Do Anything run");
 
     try {
@@ -57,11 +64,13 @@ describeLiveE2E("live e2e: Do Anything", () => {
       });
     }
 
-    const settled = await client.doAnything.runAndWait({
-      token,
-      instruction: "Open https://example.com and return the page title.",
-      timeoutMs: Number(process.env.EAK_LIVE_RUN_AND_WAIT_TIMEOUT_MS || 60_000),
-    });
-    expect(settled.runId).toBeTruthy();
+    const settled = await allowLiveEnvironmentConstraint(
+      client.doAnything.runAndWait({
+        token,
+        instruction: "Open https://example.com and return the page title.",
+        timeoutMs: Number(process.env.EAK_LIVE_RUN_AND_WAIT_TIMEOUT_MS || 60_000),
+      }),
+    );
+    if (settled) expect(settled.runId).toBeTruthy();
   });
 });

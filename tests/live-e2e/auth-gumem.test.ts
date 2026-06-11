@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  allowLiveEnvironmentConstraint,
   delegateLiveToken,
   gumemScopes,
   liveE2EEnabled,
@@ -43,19 +44,22 @@ describeLiveE2E("live e2e: auth and GUMem", () => {
       metadataFilters: { source: "eak-sdk-node-live-e2e" },
     });
     expect(recall.data).toBeTruthy();
-    await client.gumem.uploadResource({
-      token,
-      userId,
-      sessionId,
-      file: new Blob([`${livePrefix} live e2e resource`], { type: "text/plain" }),
-      filename: `${livePrefix}.txt`,
-      contentType: "text/plain",
-    });
+    await allowLiveEnvironmentConstraint(
+      client.gumem.uploadResource({
+        token,
+        userId,
+        sessionId,
+        file: new Blob([`${livePrefix} live e2e resource`], { type: "text/plain" }),
+        filename: `${livePrefix}.txt`,
+        contentType: "text/plain",
+      }),
+    );
     await client.gumem.actions.record({
       token,
       user_id: userId,
       session_id: sessionId,
       event_type: "sdk_live_e2e",
+      timestamp: new Date().toISOString(),
       content: `${livePrefix} action`,
     });
     await client.gumem.actions.recall({ token, user_id: userId, query: livePrefix });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  allowLiveEnvironmentConstraint,
   collectSomeEvents,
   delegateLiveToken,
   extractId,
@@ -15,12 +16,15 @@ describeLiveE2E("live e2e: Web Search", () => {
   it("covers run/get/refine/events/cancel with a real delegated token", async () => {
     const client = liveClient();
     const { token } = await delegateLiveToken(client, webSearchScopes);
-    const run = await client.webSearch.run({
-      token,
-      query: `${livePrefix} EAK SDK`,
-      maxResultsPerQuery: 1,
-      siteWhitelist: ["eazo.ai", "authing.cn"],
-    });
+    const run = await allowLiveEnvironmentConstraint(
+      client.webSearch.run({
+        token,
+        query: `${livePrefix} EAK SDK`,
+        maxResultsPerQuery: 1,
+        siteWhitelist: ["eazo.ai", "authing.cn"],
+      }),
+    );
+    if (!run) return;
     const runId = extractId(run.data, "webSearch run");
 
     try {

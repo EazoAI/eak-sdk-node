@@ -827,5 +827,52 @@ describe("complete public method coverage matrix", () => {
         }),
       ).rejects.toBeInstanceOf(EAKTimeoutError);
     });
+
+    it("wraps fetch connect timeouts in EAKTimeoutError", async () => {
+      const fetchError = new TypeError("fetch failed");
+      (fetchError as Error & { cause?: unknown }).cause = {
+        name: "ConnectTimeoutError",
+        code: "UND_ERR_CONNECT_TIMEOUT",
+      };
+      const client = new EazoAgentKit({
+        accessKey: "ak_matrix",
+        secretKey: "sk_matrix",
+        host: "https://eak.example.com",
+        fetch: (async () => {
+          throw fetchError;
+        }) as typeof fetch,
+      });
+
+      await expect(
+        client.delegateToken({
+          userId: "user_matrix",
+          agent: "agent_matrix",
+          scopes: ["gumem.memory:read"],
+        }),
+      ).rejects.toBeInstanceOf(EAKTimeoutError);
+    });
+
+    it("wraps fetch network failures in retryable EAKUpstreamError", async () => {
+      const client = new EazoAgentKit({
+        accessKey: "ak_matrix",
+        secretKey: "sk_matrix",
+        host: "https://eak.example.com",
+        fetch: (async () => {
+          throw new TypeError("fetch failed");
+        }) as typeof fetch,
+      });
+
+      await expect(
+        client.delegateToken({
+          userId: "user_matrix",
+          agent: "agent_matrix",
+          scopes: ["gumem.memory:read"],
+        }),
+      ).rejects.toMatchObject({
+        name: "EAKUpstreamError",
+        code: "upstream.failed",
+        retryable: true,
+      });
+    });
   });
 });

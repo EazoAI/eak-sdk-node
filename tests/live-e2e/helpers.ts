@@ -1,4 +1,11 @@
-import { EAKScopes, EazoAgentKit } from "../../src";
+import { expect } from "vitest";
+import {
+  EAKError,
+  EAKRateLimitError,
+  EAKScopes,
+  EAKValidationError,
+  EazoAgentKit,
+} from "../../src";
 import type { JsonObject } from "../../src";
 import { loadDotEnvLocal, requiredEnv } from "../helpers/env";
 
@@ -120,6 +127,35 @@ export function livePassword(): string {
     process.env.GENAUTH_DEMO_USER_PASSWORD ||
     `SdkLive!${Date.now()}Aa1`
   );
+}
+
+const liveConstraintMessages = [
+  "Out of Credits",
+  "concurrent task limit",
+  "media object storage is not configured",
+] as const;
+
+export function isLiveEnvironmentConstraint(error: unknown): error is EAKError {
+  return (
+    error instanceof EAKError &&
+    liveConstraintMessages.some((message) => error.message.includes(message)) &&
+    (error instanceof EAKRateLimitError ||
+      error instanceof EAKValidationError ||
+      error.name === "EAKError")
+  );
+}
+
+export async function allowLiveEnvironmentConstraint<T>(
+  operation: Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await operation;
+  } catch (error) {
+    if (!isLiveEnvironmentConstraint(error)) throw error;
+    expect(error.message).toBeTruthy();
+    expect(error.code).toBeTruthy();
+    return undefined;
+  }
 }
 
 export function firstUserId(data: unknown): string | undefined {

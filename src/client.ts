@@ -2,7 +2,13 @@ import { buildSignedHeaders } from "./auth";
 import { createDeepResearchNamespace } from "./deep-research";
 import { createDoAnythingNamespace } from "./do-anything";
 import { createEakNamespace } from "./eak";
-import { EAKError, EAKDelegationRequiredError, errorFromPayload, timeoutError } from "./errors";
+import {
+  EAKError,
+  EAKDelegationRequiredError,
+  errorFromPayload,
+  networkError,
+  timeoutError,
+} from "./errors";
 import { createGenAuthNamespace } from "./genauth";
 import { createGumemNamespace } from "./gumem";
 import { createTrackNamespace } from "./track";
@@ -456,7 +462,10 @@ export class EazoAgentKit {
     try {
       return await this.fetchImpl(resolved.url, { ...requestInit, signal: controller.signal });
     } catch (error) {
-      if (isAbortError(error) && didTimeout) throw timeoutError(error);
+      if ((isAbortError(error) && didTimeout) || isConnectTimeoutError(error)) {
+        throw timeoutError(error);
+      }
+      if (isFetchNetworkError(error)) throw networkError(error);
       throw error;
     } finally {
       clearTimeout(timeout);
@@ -1035,4 +1044,34 @@ function normalizeDelegateAgentTokenResponse<T extends DelegateAgentResponse>(
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function isConnectTimeoutError(error: unknown): boolean {
+  const cause = errorCause(error);
+  return (
+    errorCode(cause) === "UND_ERR_CONNECT_TIMEOUT" ||
+    errorName(cause) === "ConnectTimeoutError"
+  );
+}
+
+function isFetchNetworkError(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("fetch failed") || message.includes("network");
+}
+
+function errorCause(error: unknown): unknown {
+  return error && typeof error === "object" ? (error as { cause?: unknown }).cause : undefined;
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : undefined;
+}
+
+function errorName(error: unknown): string | undefined {
+  return error && typeof error === "object" && typeof (error as { name?: unknown }).name === "string"
+    ? (error as { name: string }).name
+    : undefined;
 }

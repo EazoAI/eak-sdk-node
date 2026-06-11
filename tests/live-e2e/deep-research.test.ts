@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  allowLiveEnvironmentConstraint,
   collectSomeEvents,
   deepResearchScopes,
   delegateLiveToken,
@@ -16,16 +17,19 @@ describeLiveE2E("live e2e: Deep Research", () => {
   it("covers run/get/events/intervene/followUp/cancel/feedback/listArtifacts/getArtifact with a real delegated token", async () => {
     const client = liveClient();
     const { token } = await delegateLiveToken(client, deepResearchScopes);
-    const run = await client.deepResearch.run({
-      token,
-      topic: `${livePrefix}: summarize the public example.com page in one paragraph`,
-      outputFormat: "report",
-      targetAudience: "SDK maintainers",
-      requireOutlineApproval: true,
-      maxCostUsd: process.env.EAK_LIVE_DEEP_RESEARCH_MAX_COST_USD || "1.00",
-      maxDurationMinutes: Number(process.env.EAK_LIVE_DEEP_RESEARCH_MAX_DURATION_MINUTES || 10),
-      domainWhitelist: ["example.com"],
-    });
+    const run = await allowLiveEnvironmentConstraint(
+      client.deepResearch.run({
+        token,
+        topic: `${livePrefix}: summarize the public example.com page in one paragraph`,
+        outputFormat: "report",
+        targetAudience: "SDK maintainers",
+        requireOutlineApproval: true,
+        maxCostUsd: process.env.EAK_LIVE_DEEP_RESEARCH_MAX_COST_USD || "1.00",
+        maxDurationMinutes: Number(process.env.EAK_LIVE_DEEP_RESEARCH_MAX_DURATION_MINUTES || 10),
+        domainWhitelist: ["example.com"],
+      }),
+    );
+    if (!run) return;
     const runId = extractId(run.data, "Deep Research run");
 
     try {
