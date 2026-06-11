@@ -101,24 +101,92 @@ export function extractId(data: unknown, label: string): string {
 
 export async function collectSomeEvents<T>(
   iterableFactory: (signal: AbortSignal) => AsyncIterable<T>,
+  options: {
+    label?: string;
+    minEvents?: number;
+    referenceId?: string;
+    referenceIdPaths?: readonly (readonly string[])[];
+    eventTypes?: readonly string[];
+    timeoutMs?: number;
+  } = {},
 ): Promise<T[]> {
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 15_000),
+    options.timeoutMs ?? Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 15_000),
   );
   const events: T[] = [];
   try {
     for await (const event of iterableFactory(controller.signal)) {
       events.push(event);
-      if (events.length >= 1) break;
+      if (events.length >= (options.minEvents || 1)) break;
     }
   } catch (error) {
-    if (!controller.signal.aborted) throw error;
+    if (!controller.signal.aborted || !isAbortError(error)) throw error;
   } finally {
     clearTimeout(timeout);
   }
+  expectLiveEvents(events, options);
   return events;
+}
+
+export function expectLiveEvents<T>(
+  events: T[],
+  options: {
+    label?: string;
+    minEvents?: number;
+    referenceId?: string;
+    referenceIdPaths?: readonly (readonly string[])[];
+    eventTypes?: readonly string[];
+  } = {},
+) {
+  const label = options.label || "live SSE";
+  expect(events.length, `${label} should emit events`).toBeGreaterThanOrEqual(
+    options.minEvents || 1,
+  );
+
+  for (const event of events) {
+    const record = asRecord(event);
+    expect(record, `${label} event should be an object`).toBeTruthy();
+    if (!record) continue;
+    const id = typeof record.id === "string" ? record.id : undefined;
+    const eventName = typeof record.event === "string" ? record.event : undefined;
+    expect(id || eventName || record.data, `${label} event should include id, event, or data`).toBeTruthy();
+    expect(record.data, `${label} event data should not be undefined`).not.toBeUndefined();
+    if (isRecord(record.data)) {
+      expect(Object.keys(record.data).length, `${label} event data should not be empty`).toBeGreaterThan(0);
+      if (typeof record.data.type === "string") {
+        expect(record.event, `${label} event should mirror data.type`).toBe(record.data.type);
+      }
+    }
+  }
+
+  if (options.referenceId) {
+    const paths = options.referenceIdPaths || [
+      ["data", "task_id"],
+      ["data", "run_id"],
+      ["data", "monitor_id"],
+      ["data", "session_id"],
+      ["data", "data", "task_id"],
+      ["data", "data", "run_id"],
+      ["data", "data", "monitor_id"],
+      ["data", "data", "session_id"],
+    ];
+    const hasReference = events.some((event) =>
+      paths.some((path) => nestedString(event, path) === options.referenceId),
+    );
+    expect(hasReference, `${label} events should reference ${options.referenceId}`).toBe(true);
+  }
+
+  if (options.eventTypes?.length) {
+    const seenTypes = events
+      .map((event) => nestedString(event, ["data", "type"]) || nestedString(event, ["event"]))
+      .filter((type): type is string => Boolean(type));
+    expect(
+      seenTypes.some((type) => options.eventTypes?.includes(type)),
+      `${label} events should include one of ${options.eventTypes.join(", ")}`,
+    ).toBe(true);
+  }
 }
 
 export function livePassword(): string {
@@ -206,4 +274,21 @@ function asRecord(value: unknown): JsonObject | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonObject)
     : undefined;
+}
+
+function isRecord(value: unknown): value is JsonObject {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function nestedString(value: unknown, path: readonly string[]): string | undefined {
+  let cursor = value;
+  for (const key of path) {
+    if (!isRecord(cursor)) return undefined;
+    cursor = cursor[key];
+  }
+  return typeof cursor === "string" && cursor.trim() ? cursor : undefined;
+}
+
+function isAbortError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && (error as { name?: unknown }).name === "AbortError");
 }

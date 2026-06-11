@@ -548,7 +548,7 @@ describe("complete public method coverage matrix", () => {
           {
             pathname: "/api/v1/projects/tenant_matrix/web_search/runs/run_matrix/messages",
             method: "POST",
-            body: { message: "narrow it" },
+            body: { text: "narrow it" },
           },
           {
             pathname: "/api/v1/projects/tenant_matrix/web_search/runs/run_matrix/events",
@@ -629,12 +629,21 @@ describe("complete public method coverage matrix", () => {
             "POST /api/v1/projects/tenant_matrix/do_anything/sessions",
             "POST /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs",
             "GET /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs/run_matrix",
-            "POST /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs/run_matrix/interventions",
+            "POST /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs/run_matrix/intervene",
             "POST /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs/run_matrix/cancel",
             "GET /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/artifacts/artifact_matrix",
             "GET /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/recording",
           ]),
         );
+        expect(
+          h.calls.find((call) =>
+            call.pathname.endsWith("/do_anything/sessions/sess_matrix/runs/run_matrix/intervene"),
+          )?.body,
+        ).toEqual({
+          kind: "answer_input_request",
+          input_request_id: "input_matrix",
+          response: "approve",
+        });
       });
     });
 

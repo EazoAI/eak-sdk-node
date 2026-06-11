@@ -1203,7 +1203,7 @@ describe("EazoAgentKit", () => {
     expect(JSON.parse(String(seen.init?.body))).toEqual({ instructions: "open the site" });
   });
 
-  it("posts doAnything.intervene to the backend /interventions route", async () => {
+  it("posts doAnything.intervene to the backend /intervene route", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const seen: { url?: string; init?: RequestInit } = {};
     const client = new EazoAgentKit({
@@ -1222,13 +1222,42 @@ describe("EazoAgentKit", () => {
       token,
       sessionId: "sess_1",
       runId: "run_1",
-      message: "please confirm",
+      requestId: "input_1",
+      response: "please confirm",
     });
 
     expect(seen.url).toBe(
-      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions/sess_1/runs/run_1/interventions",
+      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions/sess_1/runs/run_1/intervene",
     );
     expect(seen.init?.method).toBe("POST");
+    expect(JSON.parse(String(seen.init?.body))).toEqual({
+      kind: "answer_input_request",
+      input_request_id: "input_1",
+      response: "please confirm",
+    });
+  });
+
+  it("maps webSearch refine message alias to backend text", async () => {
+    const token = jwt({ webagent_tenant_id: "tenant_1" });
+    const seen: { body?: unknown } = {};
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      host: "https://eak.example.com",
+      webAgentBaseUrl: "https://eak.example.com",
+      fetch: (async (_url: URL | RequestInfo, init?: RequestInit) => {
+        seen.body = JSON.parse(String(init?.body));
+        return jsonResponse({ data: { ok: true } });
+      }) as typeof fetch,
+    });
+
+    await client.webSearch.refine({
+      token,
+      runId: "run_1",
+      message: "keep SDK results only",
+    });
+
+    expect(seen.body).toEqual({ text: "keep SDK results only" });
   });
 
   it("reads doAnything artifacts from the session-scoped /sessions/{id}/artifacts/{id} route", async () => {
@@ -1767,7 +1796,7 @@ describe("EazoAgentKit", () => {
     const base = "https://eak.example.com/api/v1/projects/tenant_1/web_search/runs/run_1";
     expect(calls).toEqual([
       { url: base, method: "GET", body: undefined },
-      { url: `${base}/messages`, method: "POST", body: { message: "narrow to 2025" } },
+      { url: `${base}/messages`, method: "POST", body: { text: "narrow to 2025" } },
       { url: `${base}/cancel`, method: "POST", body: { reason: "duplicate" } },
     ]);
   });

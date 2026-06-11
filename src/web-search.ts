@@ -26,7 +26,7 @@ export function createWebSearchNamespace(transport: EAKTransport) {
         `/web_search/runs/${encodeURIComponent(input.runId)}/messages`,
         input.token,
         {
-          body: omit(input, "token", "runId"),
+          body: normalizeWebSearchRefineInput(omit(input, "token", "runId")),
           requiredScopes: ["webagent.web_search:run"],
         },
       ),
@@ -69,6 +69,11 @@ function normalizeWebSearchRunInput(input: JsonObject): JsonObject {
     body.queries = [body.query];
   }
   delete body.query;
+  return body;
+}
+
+function normalizeWebSearchRefineInput(input: JsonObject): JsonObject {
+  const body = renameKeys(input, { message: "text" });
   return body;
 }
 

@@ -276,10 +276,10 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "POST",
-        `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}/interventions`,
+        `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}/intervene`,
         input.token,
         {
-          body: omit(input, "token", "sessionId", "runId"),
+          body: normalizeDoAnythingInterveneInput(omit(input, "token", "sessionId", "runId")),
           requiredScopes: ["webagent.do_anything:control"],
         },
       ),
@@ -337,6 +337,14 @@ function normalizeDoAnythingRunInput(input: JsonObject): JsonObject {
     outputSchema: "output_schema",
     callbackUrl: "callback_url",
   });
+  return body;
+}
+
+function normalizeDoAnythingInterveneInput(input: JsonObject): JsonObject {
+  const body = renameKeys(input, { requestId: "input_request_id" });
+  if (body.input_request_id !== undefined && body.kind === undefined) {
+    body.kind = body.response === undefined ? "skip_input_request" : "answer_input_request";
+  }
   return body;
 }
 
