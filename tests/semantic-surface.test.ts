@@ -113,13 +113,9 @@ describe("delegateToken semantic enhancements", () => {
     expect(body.agent).toBe("sdk");
     expect([...body.scopes].sort()).toEqual(
       [
-        "webagent.do_anything:run",
         "webagent.do_anything:read",
-        "webagent.do_anything:stop",
-        "webagent.do_anything:control",
-        "webagent.track:run",
+        "webagent.do_anything:manage",
         "webagent.track:read",
-        "webagent.track:stop",
         "webagent.track:manage",
         "gumem.memory:read",
       ].sort(),
@@ -131,10 +127,10 @@ describe("delegateToken semantic enhancements", () => {
     const { client, calls } = makeClient(() => jsonResponse({ data: {} }));
 
     await expect(
-      client.delegateToken({ user: { id: "user_1" }, scopes: ["do_anything:run"] }),
+      client.delegateToken({ user: { id: "user_1" }, scopes: ["do_anything:manage"] }),
     ).rejects.toMatchObject({
       name: "EAKValidationError",
-      message: expect.stringContaining("webagent.do_anything:run"),
+      message: expect.stringContaining("webagent.do_anything:manage"),
     });
     expect(calls).toHaveLength(0); // failed locally — nothing hit the wire
   });

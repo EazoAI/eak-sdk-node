@@ -49,7 +49,7 @@ export function createWebSearchNamespace(transport: EAKTransport) {
     run: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/web_search/runs", input.token, {
         body: normalizeWebSearchRunInput(omit(input, "token")),
-        requiredScopes: ["webagent.web_search:run"],
+        requiredScopes: ["webagent.web_search:manage"],
       }),
 
     get: <T = unknown>(input: RuntimeTokenInput & { runId: string }): Promise<EAKResponse<T>> =>
@@ -84,7 +84,7 @@ export function createWebSearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: omit(input, "token", "runId"),
-          requiredScopes: ["webagent.web_search:stop"],
+          requiredScopes: ["webagent.web_search:manage"],
         },
       ),
   };

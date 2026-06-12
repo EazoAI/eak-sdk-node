@@ -898,7 +898,7 @@ function resolveDelegationScopes(
   if (resolved.size === 0) {
     throw new EAKValidationError(
       "delegateToken requires at least one scope — pass scopes (e.g. " +
-        '["webagent.do_anything:run"]) and/or products (e.g. ["doAnything"])',
+        '["webagent.do_anything:manage"]) and/or products (e.g. ["doAnything"])',
     );
   }
   return [...resolved];
@@ -918,7 +918,7 @@ function validateScopeFormat(scope: string): void {
   if (!/^[a-z0-9_]+(\.[a-z0-9_]+)+:[a-z0-9_]+$/.test(scope)) {
     throw new EAKValidationError(
       `delegateToken: malformed scope "${scope}" — scopes look like ` +
-        '"<service>.<resource>:<action>", e.g. "webagent.do_anything:run"',
+        '"<service>.<resource>:<action>", e.g. "webagent.do_anything:manage"',
     );
   }
 }

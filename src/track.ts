@@ -142,7 +142,7 @@ export function createTrackNamespace(transport: EAKTransport) {
         input.token,
         {
           body: {},
-          requiredScopes: ["webagent.track:run"],
+          requiredScopes: ["webagent.track:manage"],
         },
       ),
 

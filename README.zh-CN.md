@@ -216,7 +216,7 @@ const grant = await eak.delegateToken({
   redirectUri: "https://app.example.com/eak/callback",
   state: "business-csrf-state",
   agent: "research-assistant",
-  scopes: ["gumem.memory:read", "webagent.do_anything:run"],
+  scopes: ["gumem.memory:read", "webagent.do_anything:manage"],
 });
 
 redirectUserTo(grant.data.authorizationUrl);
@@ -243,7 +243,7 @@ await eak.gumem.recall({
 
 ## Scope 怎么选
 
-WebAgent 产品最简单的授权方式是 `products` 糖——每个产品名展开为该产品的完整 scope 集合：
+每个 WebAgent 产品只有两个 scope：`read`（只读观察——状态、事件、产物）与 `manage`（一切改变执行状态的操作——发起、取消、应答、消息、监控的增删改）。全集共 8 个：`webagent.{do_anything, web_search, deep_research, track}:{read, manage}`。最简单的授权方式是 `products` 糖——每个产品名展开为该产品的 `read` + `manage` 一对：
 
 ```ts
 await eak.delegateToken({
@@ -253,7 +253,7 @@ await eak.delegateToken({
 });
 ```
 
-scope 字符串在发请求前就会本地预检：漏掉服务前缀（比如写成 `do_anything:run` 而不是 `webagent.do_anything:run`）会立即抛出 `EAKValidationError`，错误消息里带正确写法。
+scope 字符串在发请求前就会本地预检：漏掉服务前缀（比如写成 `do_anything:manage` 而不是 `webagent.do_anything:manage`）会立即抛出 `EAKValidationError`，错误消息里带正确写法。
 
 需要让授权边界直接出现在业务代码里时，使用显式 scope 字符串。
 
@@ -262,9 +262,9 @@ scope 字符串在发请求前就会本地预检：漏掉服务前缀（比如�
 | 读取用户记忆 | `gumem.memory:read` | Agent 可以读取与你相关的历史偏好。 |
 | 创建 GUMem 会话并召回上下文 | `gumem.memory:read`, `gumem.memory:write`, `gumem.message:write` | Agent 可以为当前用户创建记忆会话、写入消息并召回上下文。 |
 | 写入任务结果 | `gumem.message:write`, `gumem.action:write` | Agent 可以把本次确认过的结果写回 GUMem。 |
-| 搜索公开网页 | `webagent.web_search:run`, `webagent.web_search:read` | Agent 可以搜索公开网页并读取结果。 |
-| 执行网页任务 | `webagent.do_anything:run`, `webagent.do_anything:read`, `webagent.do_anything:stop`, `webagent.do_anything:control` | Agent 可以执行有边界的网页任务、读取进度、停止任务，并在需要时介入控制。 |
-| 创建长期监控 | `webagent.track:manage`, `webagent.track:read`, `webagent.track:run`, `webagent.track:stop` | Agent 可以配置监控、读取事件、立即运行检查，并停止监控。 |
+| 搜索公开网页 | `webagent.web_search:read`, `webagent.web_search:manage` | Agent 可以搜索公开网页并读取结果。 |
+| 执行网页任务 | `webagent.do_anything:read`, `webagent.do_anything:manage` | Agent 可以执行有边界的网页任务、读取进度、停止任务，并在需要时介入控制。 |
+| 创建长期监控 | `webagent.track:read`, `webagent.track:manage` | Agent 可以配置监控、读取事件、立即运行检查，并停止监控。 |
 
 低风险能力通常可以静默授权，例如读取当前用户自己的 GUMem、写入本次会话摘要、搜索公开网页、读取普通任务结果。
 

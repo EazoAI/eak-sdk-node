@@ -219,7 +219,7 @@ const grant = await eak.delegateToken({
   redirectUri: "https://app.example.com/eak/callback",
   state: "business-csrf-state",
   agent: "research-assistant",
-  scopes: ["gumem.memory:read", "webagent.do_anything:run"],
+  scopes: ["gumem.memory:read", "webagent.do_anything:manage"],
 });
 
 redirectUserTo(grant.data.authorizationUrl);
@@ -246,7 +246,7 @@ await eak.gumem.recall({
 
 ## Choosing Scopes
 
-For the WebAgent products, the simplest authorization is the `products` sugar — each product name expands to its full scope set:
+Each WebAgent product exposes exactly two scopes: `read` (observe — status, events, artifacts) and `manage` (anything that changes execution state — run, cancel, respond, messages, monitor CRUD). The full set is the 8 scopes `webagent.{do_anything, web_search, deep_research, track}:{read, manage}`. The simplest authorization is the `products` sugar — each product name expands to its `read` + `manage` pair:
 
 ```ts
 await eak.delegateToken({
@@ -256,7 +256,7 @@ await eak.delegateToken({
 });
 ```
 
-Scope strings are validated locally before any request: a scope missing its service prefix (e.g. `do_anything:run` instead of `webagent.do_anything:run`) throws `EAKValidationError` immediately with the correct form in the message.
+Scope strings are validated locally before any request: a scope missing its service prefix (e.g. `do_anything:manage` instead of `webagent.do_anything:manage`) throws `EAKValidationError` immediately with the correct form in the message.
 
 Use explicit scope strings when the requested permission boundary should be visible in code.
 
@@ -265,9 +265,9 @@ Use explicit scope strings when the requested permission boundary should be visi
 | Read user memory | `gumem.memory:read` | Agent can read relevant historical preferences. |
 | Create a GUMem session and recall context | `gumem.memory:read`, `gumem.memory:write`, `gumem.message:write` | Agent can create a memory session, write messages, and recall context for the current user. |
 | Write task results | `gumem.message:write`, `gumem.action:write` | Agent can write this task's confirmed result back to GUMem. |
-| Search public web | `webagent.web_search:run`, `webagent.web_search:read` | Agent can search public pages and read search results. |
-| Run a bounded web task | `webagent.do_anything:run`, `webagent.do_anything:read`, `webagent.do_anything:stop`, `webagent.do_anything:control` | Agent can run a visible web task, read progress, stop it, and intervene when needed. |
-| Create a monitor | `webagent.track:manage`, `webagent.track:read`, `webagent.track:run`, `webagent.track:stop` | Agent can configure monitors, read events, run checks, and stop monitors. |
+| Search public web | `webagent.web_search:read`, `webagent.web_search:manage` | Agent can search public pages and read search results. |
+| Run a bounded web task | `webagent.do_anything:read`, `webagent.do_anything:manage` | Agent can run a visible web task, read progress, stop it, and intervene when needed. |
+| Create a monitor | `webagent.track:read`, `webagent.track:manage` | Agent can configure monitors, read events, run checks, and stop monitors. |
 
 Silent mode is usually appropriate for low-risk actions such as reading current-user memory, writing a confirmed summary, or searching public web pages.
 

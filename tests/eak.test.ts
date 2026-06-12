@@ -66,7 +66,7 @@ describe("EazoAgentKit", () => {
     const result = await client.delegateToken({
       user: { id: "user_1", subject: "user_1", name: "Test User" },
       agent: "research-assistant",
-      scopes: EAKScopeBundles.AGENT_DO_ANYTHING_BASIC,
+      scopes: EAKScopeBundles.DO_ANYTHING,
       mode: "silent",
     });
 
@@ -236,7 +236,7 @@ describe("EazoAgentKit", () => {
             authorizationUrl: "https://eak.example.com/authorize?grant_id=grant_interactive",
             grantId: "grant_interactive",
             grantState: "grant_state_1",
-            requestedScopes: ["gumem.memory:read", "webagent.do_anything:run"],
+            requestedScopes: ["gumem.memory:read", "webagent.do_anything:manage"],
           },
           meta: { requestId: "req_interactive" },
         });
@@ -248,7 +248,7 @@ describe("EazoAgentKit", () => {
       redirectUri: "https://app.example.com/eak/callback",
       state: "business_state_1",
       agent: "research-assistant",
-      scopes: ["gumem.memory:read", "webagent.do_anything:run"],
+      scopes: ["gumem.memory:read", "webagent.do_anything:manage"],
     });
 
     expect(seen.url).toBe("https://eak.example.com/api/v3/eak/delegations");
@@ -258,7 +258,7 @@ describe("EazoAgentKit", () => {
       redirectUri: "https://app.example.com/eak/callback",
       state: "business_state_1",
       agent: "research-assistant",
-      scopes: ["gumem.memory:read", "webagent.do_anything:run"],
+      scopes: ["gumem.memory:read", "webagent.do_anything:manage"],
     });
     expect(result.data).toMatchObject({
       mode: "interactive",
@@ -266,7 +266,7 @@ describe("EazoAgentKit", () => {
       grantId: "grant_interactive",
       grantState: "grant_state_1",
       state: "grant_state_1",
-      requestedScopes: ["gumem.memory:read", "webagent.do_anything:run"],
+      requestedScopes: ["gumem.memory:read", "webagent.do_anything:manage"],
     });
   });
 
@@ -1085,13 +1085,25 @@ describe("EazoAgentKit", () => {
   it("exports stable scope and event constants", () => {
     expect(EAKScopes.GUMEM_MEMORY_READ).toBe("gumem.memory:read");
     expect("GENAUTH_USER_LIST" in EAKScopes).toBe(false);
-    expect(EAKScopes.DO_ANYTHING_RUN).toBe("webagent.do_anything:run");
     expect(EAKScopes.DO_ANYTHING_READ).toBe("webagent.do_anything:read");
-    expect(EAKScopes.DO_ANYTHING_STOP).toBe("webagent.do_anything:stop");
-    expect(EAKScopes.DO_ANYTHING_CONTROL).toBe("webagent.do_anything:control");
-    expect(EAKScopes.WEB_SEARCH_STOP).toBe("webagent.web_search:stop");
-    expect(EAKScopes.DEEP_RESEARCH_CONTROL).toBe("webagent.deep_research:control");
+    expect(EAKScopes.DO_ANYTHING_MANAGE).toBe("webagent.do_anything:manage");
+    expect(EAKScopes.WEB_SEARCH_READ).toBe("webagent.web_search:read");
+    expect(EAKScopes.WEB_SEARCH_MANAGE).toBe("webagent.web_search:manage");
+    expect(EAKScopes.DEEP_RESEARCH_READ).toBe("webagent.deep_research:read");
+    expect(EAKScopes.DEEP_RESEARCH_MANAGE).toBe("webagent.deep_research:manage");
+    expect(EAKScopes.TRACK_READ).toBe("webagent.track:read");
     expect(EAKScopes.TRACK_MANAGE).toBe("webagent.track:manage");
+    // Legacy verb constants are gone — read/manage is the whole model.
+    expect("DO_ANYTHING_RUN" in EAKScopes).toBe(false);
+    expect("DO_ANYTHING_STOP" in EAKScopes).toBe(false);
+    expect("DO_ANYTHING_CONTROL" in EAKScopes).toBe(false);
+    expect("WEB_SEARCH_RUN" in EAKScopes).toBe(false);
+    expect("WEB_SEARCH_STOP" in EAKScopes).toBe(false);
+    expect("DEEP_RESEARCH_RUN" in EAKScopes).toBe(false);
+    expect("DEEP_RESEARCH_STOP" in EAKScopes).toBe(false);
+    expect("DEEP_RESEARCH_CONTROL" in EAKScopes).toBe(false);
+    expect("TRACK_RUN" in EAKScopes).toBe(false);
+    expect("TRACK_STOP" in EAKScopes).toBe(false);
     expect("WEBAGENT_TASK_RUN" in EAKScopes).toBe(false);
     expect("WEBAGENT_DO_ANYTHING_EVENTS" in EAKScopes).toBe(false);
     expect(EAKScopeBundles.GUMEM_SESSION_RECALL).toEqual([
@@ -1100,11 +1112,21 @@ describe("EazoAgentKit", () => {
       EAKScopes.GUMEM_MESSAGE_WRITE,
     ]);
     expect("GENAUTH_USER_ADMIN" in EAKScopeBundles).toBe(false);
-    expect(EAKScopeBundles.AGENT_DO_ANYTHING_BASIC).toEqual([
-      EAKScopes.DO_ANYTHING_RUN,
+    expect(EAKScopeBundles.DO_ANYTHING).toEqual([
       EAKScopes.DO_ANYTHING_READ,
-      EAKScopes.DO_ANYTHING_STOP,
-      EAKScopes.DO_ANYTHING_CONTROL,
+      EAKScopes.DO_ANYTHING_MANAGE,
+    ]);
+    expect(EAKScopeBundles.WEB_SEARCH).toEqual([
+      EAKScopes.WEB_SEARCH_READ,
+      EAKScopes.WEB_SEARCH_MANAGE,
+    ]);
+    expect(EAKScopeBundles.DEEP_RESEARCH).toEqual([
+      EAKScopes.DEEP_RESEARCH_READ,
+      EAKScopes.DEEP_RESEARCH_MANAGE,
+    ]);
+    expect(EAKScopeBundles.TRACK).toEqual([
+      EAKScopes.TRACK_READ,
+      EAKScopes.TRACK_MANAGE,
     ]);
     expect(EAKEventTypes.RUN_COMPLETED).toBe("run.completed");
   });
@@ -1154,24 +1176,19 @@ describe("EazoAgentKit", () => {
     await client.track.api.deleteMonitor({ token: delegationToken, monitorId: "monitor_1" });
     await client.track.api.updateMonitor({ token: delegationToken, monitorId: "monitor_1", title: "updated" });
 
+    // Each product exchanges once per distinct scope set. With the two-verb
+    // model every state-changing call shares the product's `manage` token, so
+    // cancel / intervene / followUp / runNow / deleteMonitor / updateMonitor
+    // all reuse the cached token from the first `manage` exchange.
     expect(exchanges).toEqual([
-      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.do_anything:run"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.do_anything:manage"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.do_anything:read"] },
-      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.do_anything:stop"] },
-      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.do_anything:control"] },
-      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:run"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:manage"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:read"] },
-      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.web_search:stop"] },
-      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.deep_research:run"] },
+      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.deep_research:manage"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.deep_research:read"] },
-      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.deep_research:stop"] },
-      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.deep_research:control"] },
-      // createMonitor → track:manage. getMonitor → track:read. runNow → track:run.
-      // deleteMonitor + updateMonitor also need track:manage but reuse the cached
-      // product token from createMonitor, so they trigger no further exchange.
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:manage"] },
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:read"] },
-      { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.track:run"] },
     ]);
   });
 

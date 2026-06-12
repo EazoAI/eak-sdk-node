@@ -62,29 +62,23 @@ export const gumemScopes = [
 ] as const;
 
 export const webSearchScopes = [
-  EAKScopes.WEB_SEARCH_RUN,
   EAKScopes.WEB_SEARCH_READ,
-  EAKScopes.WEB_SEARCH_STOP,
+  EAKScopes.WEB_SEARCH_MANAGE,
 ] as const;
 
 export const doAnythingScopes = [
-  EAKScopes.DO_ANYTHING_RUN,
   EAKScopes.DO_ANYTHING_READ,
-  EAKScopes.DO_ANYTHING_STOP,
-  EAKScopes.DO_ANYTHING_CONTROL,
+  EAKScopes.DO_ANYTHING_MANAGE,
 ] as const;
 
 export const trackScopes = [
-  EAKScopes.TRACK_RUN,
   EAKScopes.TRACK_READ,
   EAKScopes.TRACK_MANAGE,
 ] as const;
 
 export const deepResearchScopes = [
-  EAKScopes.DEEP_RESEARCH_RUN,
   EAKScopes.DEEP_RESEARCH_READ,
-  EAKScopes.DEEP_RESEARCH_STOP,
-  EAKScopes.DEEP_RESEARCH_CONTROL,
+  EAKScopes.DEEP_RESEARCH_MANAGE,
 ] as const;
 
 export function extractId(data: unknown, label: string): string {

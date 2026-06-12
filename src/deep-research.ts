@@ -61,7 +61,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
     run: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/deep_research/runs", input.token, {
         body: normalizeDeepResearchRunInput(omit(input, "token")),
-        requiredScopes: ["webagent.deep_research:run"],
+        requiredScopes: ["webagent.deep_research:manage"],
       }),
 
     get: <T = unknown>(input: RuntimeTokenInput & { runId: string }): Promise<EAKResponse<T>> =>
@@ -96,7 +96,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: renameKeys(omit(input, "token", "runId"), { requestId: "request_id" }),
-          requiredScopes: ["webagent.deep_research:control"],
+          requiredScopes: ["webagent.deep_research:manage"],
         },
       ),
 
@@ -109,7 +109,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: omit(input, "token", "runId"),
-          requiredScopes: ["webagent.deep_research:control"],
+          requiredScopes: ["webagent.deep_research:manage"],
         },
       ),
 
@@ -122,7 +122,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: {},
-          requiredScopes: ["webagent.deep_research:stop"],
+          requiredScopes: ["webagent.deep_research:manage"],
         },
       ),
 
@@ -135,7 +135,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: renameKeys(omit(input, "token", "runId"), { feedbackText: "feedback_text" }),
-          requiredScopes: ["webagent.deep_research:control"],
+          requiredScopes: ["webagent.deep_research:manage"],
         },
       ),
 

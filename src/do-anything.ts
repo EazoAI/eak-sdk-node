@@ -159,7 +159,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
     createSession: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/do_anything/sessions", input.token, {
         body: omit(input, "token"),
-        requiredScopes: ["webagent.do_anything:run"],
+        requiredScopes: ["webagent.do_anything:manage"],
       }),
 
     createRun: <T = unknown>(
@@ -171,7 +171,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         input.token,
         {
           body: normalizeDoAnythingRunInput(omit(input, "token", "sessionId")),
-          requiredScopes: ["webagent.do_anything:run"],
+          requiredScopes: ["webagent.do_anything:manage"],
         },
       ),
 
@@ -237,7 +237,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         input.token,
         {
           body: normalizeDoAnythingInterveneInput(omit(input, "token", "sessionId", "runId")),
-          requiredScopes: ["webagent.do_anything:control"],
+          requiredScopes: ["webagent.do_anything:manage"],
         },
       ),
 
@@ -250,7 +250,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
         input.token,
         {
           body: omit(input, "token", "sessionId", "runId"),
-          requiredScopes: ["webagent.do_anything:stop"],
+          requiredScopes: ["webagent.do_anything:manage"],
         },
       ),
 
