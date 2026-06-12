@@ -1,25 +1,43 @@
 import fs from "node:fs";
-import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EAKError } from "../../src";
+import type { JsonObject, RunHandle, RunResult } from "../../src";
 import {
   allowLiveEnvironmentConstraint,
-  collectSomeEvents,
+  collectRunEvents,
   delegateLiveToken,
-  extractId,
   liveE2EEnabled,
   liveClient,
+  openRawEventRecorder,
   webSearchScopes,
 } from "./helpers";
 
 const describeLiveE2E = liveE2EEnabled ? describe : describe.skip;
 
-describeLiveE2E("live e2e: Web Search", () => {
+const SITE_WHITELIST = ["eazo.ai", "authing.cn"];
+
+// The settled `result.output` for webSearch is the wire output object
+// ({ engines, queries, results: [...] }). Dig the result items out without
+// assuming which level carries the array.
+function searchResultItems(output: unknown): JsonObject[] {
+  if (Array.isArray(output)) return output.filter(isRecord);
+  if (isRecord(output) && Array.isArray(output.results)) {
+    return output.results.filter(isRecord);
+  }
+  return [];
+}
+
+function isRecord(value: unknown): value is JsonObject {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+describeLiveE2E("live e2e: Web Search (semantic surface)", () => {
   let client: ReturnType<typeof liveClient>;
   let token: string;
-  let runId: string | undefined;
-  let runReady: Promise<string | undefined> | undefined;
-  let canceled = false;
+  let run: RunHandle | undefined;
+  let runReady: Promise<RunHandle | undefined> | undefined;
+  let resultReady: Promise<RunResult | undefined> | undefined;
+  let recordedEvents = 0;
+  let recordedFile: string | undefined;
 
   beforeAll(async () => {
     client = liveClient();
@@ -27,118 +45,129 @@ describeLiveE2E("live e2e: Web Search", () => {
   });
 
   afterAll(async () => {
-    if (runId && !canceled) {
-      await client.webSearch.api.cancel({ token, runId, reason: "sdk live e2e cleanup" }).catch(() => undefined);
-    }
+    // Semantic cancel is idempotent — safe even when the run already settled.
+    await run?.cancel("sdk live e2e cleanup").catch(() => undefined);
   });
 
+  // One run shared across the file: token passed ONCE at the entry call,
+  // every later operation goes through the handle.
   function ensureRun() {
     runReady ??= (async () => {
-      const run = await allowLiveEnvironmentConstraint(
-        client.webSearch.api.run({
+      const handle = await allowLiveEnvironmentConstraint(
+        client.webSearch.run({
           token,
           // A real, evergreen query that search engines can always match.
-          // Do NOT embed livePrefix here: engines tokenize the nonce into
-          // noise ("sdk", "live") and return 0 hits or junk nondeterministically;
-          // run traceability comes from runId, not the query text.
+          // Do NOT embed a nonce here: engines tokenize it into noise and
+          // return 0 hits nondeterministically; traceability comes from run.id.
           query: "EAK SDK quickstart guide",
           maxResultsPerQuery: 1,
-          siteWhitelist: ["eazo.ai", "authing.cn"],
+          siteWhitelist: SITE_WHITELIST,
         }),
       );
-      if (!run) return undefined;
-      runId = extractId(run.data, "webSearch run");
-      return runId;
+      run = handle ?? undefined;
+      return run;
     })();
     return runReady;
   }
 
-  it("webSearch.run({ query, maxResultsPerQuery, siteWhitelist })", async () => {
-    const id = await ensureRun();
-    expect(id).toBeTruthy();
+  // One wait() shared across the file. Records the raw wire stream to disk
+  // while waiting — every semantic event carries the original wire event on
+  // `event.raw`, so the recorder needs no api.* access.
+  function ensureResult() {
+    resultReady ??= (async () => {
+      const handle = await ensureRun();
+      if (!handle) return undefined;
+      const recorder = openRawEventRecorder(`web_search-${handle.id}`);
+      recordedFile = recorder.file;
+      console.log(`recording run ${handle.id} → ${recorder.dir}`);
+      const result = await handle.wait({
+        timeoutMs: Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 120_000),
+        onEvent: (event) => recorder.record(event),
+      });
+      recordedEvents = recorder.count();
+      console.log(`recorded ${recordedEvents} events → ${recorder.file}`);
+      return result;
+    })();
+    return resultReady;
+  }
+
+  it("webSearch.run({ token, query, maxResultsPerQuery, siteWhitelist }) returns a handle", async () => {
+    const handle = await ensureRun();
+    if (!handle) return;
+    expect(handle.id).toBeTruthy();
   });
 
-  it("webSearch.get({ runId })", async () => {
-    const id = await ensureRun();
-    if (!id) return;
-    const run = await client.webSearch.api.get({ token, runId: id });
-    expect(run.data).toBeTruthy();
+  it("run.status() refreshes the run without re-passing token or id", async () => {
+    const handle = await ensureRun();
+    if (!handle) return;
+    const status = await handle.status();
+    expect(status.id).toBe(handle.id);
+    expect(status.status).toBeTruthy();
   });
 
-  it("webSearch.events({ runId, signal })", async () => {
-    const id = await ensureRun();
-    if (!id) return;
-    await collectSomeEvents(
-      (signal) => client.webSearch.api.events({ token, runId: id, signal }),
-      { label: "webSearch.events", referenceId: id },
+  it("run.events() yields normalized semantic events", async () => {
+    const handle = await ensureRun();
+    if (!handle) return;
+    const events = await collectRunEvents((signal) => handle.events({ signal }), {
+      label: "webSearch run.events",
+    });
+    expect(events.some((event) => event.runId === handle.id)).toBe(true);
+  });
+
+  it("run.wait() settles with on-whitelist results and records the raw stream", async () => {
+    const result = await ensureResult();
+    if (!result) return;
+
+    expect(result.status).toBe("succeeded");
+    expect(result.artifacts).toEqual([]);
+
+    // Domain content, not a status flip: the run was created with
+    // maxResultsPerQuery: 1 and a site whitelist — assert the server honored
+    // both and produced real result items.
+    const items = searchResultItems(result.output);
+    expect(items.length, "search should return at least one result").toBeGreaterThan(0);
+    expect(items.length).toBeLessThanOrEqual(1);
+    for (const item of items) {
+      expect(typeof item.url, "result.url").toBe("string");
+      expect(typeof item.title, "result.title").toBe("string");
+      expect(String(item.title).length).toBeGreaterThan(0);
+      const host = new URL(String(item.url)).hostname.toLowerCase();
+      expect(
+        SITE_WHITELIST.some((d) => host === d || host.endsWith(`.${d}`)),
+        `result ${String(item.url)} is off-whitelist`,
+      ).toBe(true);
+    }
+
+    // The recorder ran inside wait() — raw wire envelopes are on disk.
+    expect(recordedEvents).toBeGreaterThan(0);
+    expect(recordedFile && fs.existsSync(recordedFile)).toBe(true);
+  });
+
+  it("run.respond() fails loudly — webSearch never requests input", async () => {
+    const handle = await ensureRun();
+    if (!handle) return;
+    await expect(handle.respond("nonexistent-request")).rejects.toThrowError(
+      /never request input/,
     );
   });
 
-  // Same recording pattern as do-anything: persist the raw event stream under
-  // .secrets/runs/web_search-<runId>/ (override with EAK_OUT_DIR) and echo
-  // each event to the console as it arrives.
-  it("records the event stream to disk", async () => {
-    const id = await ensureRun();
-    if (!id) return;
-    const outDir =
-      process.env.EAK_OUT_DIR || path.join(process.cwd(), ".secrets", "runs", `web_search-${id}`);
-    fs.mkdirSync(outDir, { recursive: true });
-    const eventsFile = path.join(outDir, "events.jsonl");
-    fs.writeFileSync(eventsFile, ""); // truncate any prior run's log
-    console.log(`recording run ${id} → ${outDir}`);
-
-    let total = 0;
-    const signal = AbortSignal.timeout(
-      Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 60_000),
-    );
-    try {
-      for await (const ev of client.webSearch.api.events({ token, runId: id, signal })) {
-        total++;
-        fs.appendFileSync(
-          eventsFile,
-          JSON.stringify({ receivedAt: new Date().toISOString(), ...ev }) + "\n",
-        );
-        const type = String(ev.event || "");
-        console.log(`  [${type}] ${JSON.stringify(ev.data ?? {}).slice(0, 110)}`);
-        if (type === "run.completed") {
-          // The run was created with maxResultsPerQuery: 1 — assert the
-          // server actually honored the cap, not just accepted the field.
-          const results = (ev.data as { output?: { results?: unknown[] } } | undefined)?.output
-            ?.results;
-          if (Array.isArray(results)) {
-            expect(results.length).toBeLessThanOrEqual(1);
-            // The run was created with siteWhitelist — every returned URL
-            // must be on (or under) one of the whitelisted hosts.
-            const whitelist = ["eazo.ai", "authing.cn"];
-            for (const item of results as Array<{ url?: string }>) {
-              if (!item?.url) continue;
-              const host = new URL(item.url).hostname.toLowerCase();
-              expect(
-                whitelist.some((d) => host === d || host.endsWith(`.${d}`)),
-                `result ${item.url} is off-whitelist`,
-              ).toBe(true);
-            }
-          }
-        }
-        if (type === "run.completed" || type === "run.failed") break;
-      }
-    } catch (error) {
-      if (!signal.aborted) throw error;
-    }
-    console.log(`recorded ${total} events → ${eventsFile}`);
-    expect(total).toBeGreaterThan(0);
+  it("run.cancel() is idempotent on a settled run", async () => {
+    const handle = await ensureRun();
+    if (!handle) return;
+    await ensureResult();
+    // The contract makes cancel idempotent: cancelling a terminal run returns
+    // its terminal state instead of throwing a wire 4xx.
+    const status = await handle.cancel("sdk live e2e cleanup");
+    expect(["succeeded", "failed", "canceled"]).toContain(status.status);
   });
 
-  it("webSearch.cancel({ runId, reason })", async () => {
-    const id = await ensureRun();
-    if (!id) return;
-    try {
-      await client.webSearch.api.cancel({ token, runId: id, reason: "sdk live e2e cleanup" });
-    } catch (error) {
-      // The recording test may have ridden the run to its terminal event —
-      // canceling a finished run 4xxes. Accept that.
-      if (!(error instanceof EAKError) || (error.status ?? 0) < 400) throw error;
-    }
-    canceled = true;
+  // Escape-hatch smoke: the wire layer (api.*) must keep working for advanced
+  // users, but it appears ONLY here — everything above is semantic.
+  it("escape hatch: api.get({ token, runId }) still speaks wire", async () => {
+    const handle = await ensureRun();
+    if (!handle) return;
+    const wire = await client.webSearch.api.get<JsonObject>({ token, runId: handle.id });
+    expect(wire.data).toBeTruthy();
+    expect(typeof wire.data.status).toBe("string");
   });
 });

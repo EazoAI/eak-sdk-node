@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { expect } from "vitest";
 import {
   EAKError,
@@ -6,7 +8,7 @@ import {
   EAKValidationError,
   EazoAgentKit,
 } from "../../src";
-import type { JsonObject } from "../../src";
+import type { JsonObject, RunEvent } from "../../src";
 import { loadDotEnvLocal, requiredEnv } from "../helpers/env";
 
 loadDotEnvLocal();
@@ -103,94 +105,93 @@ export function extractId(data: unknown, label: string): string {
   throw new Error(`EAK live e2e could not read ${label} id from ${JSON.stringify(data)}`);
 }
 
-export async function collectSomeEvents<T>(
-  iterableFactory: (signal: AbortSignal) => AsyncIterable<T>,
+/**
+ * Collect events from a SEMANTIC stream (`run.events()` / `monitor.events()`)
+ * until `minEvents` are seen (and `until` matched, when given) or the timeout
+ * elapses. Asserts the normalized `RunEvent` invariants on every event:
+ * a `type`, an `at` timestamp, an object `data` payload, and the original
+ * wire event on `raw`.
+ */
+export async function collectRunEvents(
+  factory: (signal: AbortSignal) => AsyncIterable<RunEvent>,
   options: {
     label?: string;
     minEvents?: number;
-    referenceId?: string;
-    referenceIdPaths?: readonly (readonly string[])[];
-    eventTypes?: readonly string[];
     timeoutMs?: number;
+    /** Keep collecting until an event matches (asserted to have been seen). */
+    until?: (event: RunEvent) => boolean;
   } = {},
-): Promise<T[]> {
+): Promise<RunEvent[]> {
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
     options.timeoutMs ?? Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 15_000),
   );
-  const events: T[] = [];
+  const events: RunEvent[] = [];
+  let matched = !options.until;
   try {
-    for await (const event of iterableFactory(controller.signal)) {
+    for await (const event of factory(controller.signal)) {
       events.push(event);
-      if (events.length >= (options.minEvents || 1)) break;
+      if (options.until?.(event)) matched = true;
+      if (matched && events.length >= (options.minEvents || 1)) break;
     }
   } catch (error) {
     if (!controller.signal.aborted || !isAbortError(error)) throw error;
   } finally {
     clearTimeout(timeout);
   }
-  expectLiveEvents(events, options);
-  return events;
-}
 
-export function expectLiveEvents<T>(
-  events: T[],
-  options: {
-    label?: string;
-    minEvents?: number;
-    referenceId?: string;
-    referenceIdPaths?: readonly (readonly string[])[];
-    eventTypes?: readonly string[];
-  } = {},
-) {
-  const label = options.label || "live SSE";
+  const label = options.label || "semantic events";
   expect(events.length, `${label} should emit events`).toBeGreaterThanOrEqual(
     options.minEvents || 1,
   );
-
   for (const event of events) {
-    const record = asRecord(event);
-    expect(record, `${label} event should be an object`).toBeTruthy();
-    if (!record) continue;
-    const id = typeof record.id === "string" ? record.id : undefined;
-    const eventName = typeof record.event === "string" ? record.event : undefined;
-    expect(id || eventName || record.data, `${label} event should include id, event, or data`).toBeTruthy();
-    expect(record.data, `${label} event data should not be undefined`).not.toBeUndefined();
-    if (isRecord(record.data)) {
-      expect(Object.keys(record.data).length, `${label} event data should not be empty`).toBeGreaterThan(0);
-      if (typeof record.data.type === "string") {
-        expect(record.event, `${label} event should mirror data.type`).toBe(record.data.type);
-      }
-    }
-  }
-
-  if (options.referenceId) {
-    const paths = options.referenceIdPaths || [
-      ["data", "task_id"],
-      ["data", "run_id"],
-      ["data", "monitor_id"],
-      ["data", "session_id"],
-      ["data", "data", "task_id"],
-      ["data", "data", "run_id"],
-      ["data", "data", "monitor_id"],
-      ["data", "data", "session_id"],
-    ];
-    const hasReference = events.some((event) =>
-      paths.some((path) => nestedString(event, path) === options.referenceId),
-    );
-    expect(hasReference, `${label} events should reference ${options.referenceId}`).toBe(true);
-  }
-
-  if (options.eventTypes?.length) {
-    const seenTypes = events
-      .map((event) => nestedString(event, ["data", "type"]) || nestedString(event, ["event"]))
-      .filter((type): type is string => Boolean(type));
+    expect(typeof event.type, `${label} event.type should be a string`).toBe("string");
+    expect(event.at, `${label} event.at should be set`).toBeTruthy();
     expect(
-      seenTypes.some((type) => options.eventTypes?.includes(type)),
-      `${label} events should include one of ${options.eventTypes.join(", ")}`,
+      event.data && typeof event.data === "object",
+      `${label} event.data should be an object`,
     ).toBe(true);
+    expect(event.raw, `${label} event.raw should carry the wire event`).toBeTruthy();
   }
+  if (options.until) {
+    expect(matched, `${label} should include the awaited event`).toBe(true);
+  }
+  return events;
+}
+
+/**
+ * On-disk raw event recorder. Resolves the output directory
+ * (`EAK_OUT_DIR` or `.secrets/runs/<label>`), truncates `events.jsonl`, and
+ * appends every event's ORIGINAL wire envelope (`event.raw`) as it arrives —
+ * the semantic stream carries the wire event along, so recording does not
+ * need the `api.*` escape hatch.
+ */
+export function openRawEventRecorder(label: string): {
+  dir: string;
+  file: string;
+  count: () => number;
+  record: (event: RunEvent) => void;
+} {
+  const dir = process.env.EAK_OUT_DIR || path.join(process.cwd(), ".secrets", "runs", label);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "events.jsonl");
+  fs.writeFileSync(file, ""); // truncate any prior run's log
+  let count = 0;
+  return {
+    dir,
+    file,
+    count: () => count,
+    record(event) {
+      count++;
+      fs.appendFileSync(
+        file,
+        JSON.stringify({ receivedAt: new Date().toISOString(), ...event.raw }) + "\n",
+      );
+      const type = String(event.raw.event || event.type);
+      console.log(`  [${type}] ${JSON.stringify(event.raw.data ?? {}).slice(0, 110)}`);
+    },
+  };
 }
 
 export function livePassword(): string {
@@ -247,23 +248,6 @@ export function firstUserId(data: unknown): string | undefined {
   return findString(data, ["userId", "id", "user_id", "sub", "username"]);
 }
 
-export function firstArtifactId(data: unknown): string | undefined {
-  const arrays = [
-    data,
-    asRecord(data)?.list,
-    asRecord(data)?.items,
-    asRecord(data)?.artifacts,
-    asRecord(data)?.data,
-  ];
-  for (const candidate of arrays) {
-    if (Array.isArray(candidate) && candidate.length) {
-      const id = findString(candidate[0], ["artifactId", "artifact_id", "id"]);
-      if (id) return id;
-    }
-  }
-  return findString(data, ["artifactId", "artifact_id", "id"]);
-}
-
 function findString(value: unknown, keys: readonly string[]): string | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
@@ -278,19 +262,6 @@ function asRecord(value: unknown): JsonObject | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonObject)
     : undefined;
-}
-
-function isRecord(value: unknown): value is JsonObject {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function nestedString(value: unknown, path: readonly string[]): string | undefined {
-  let cursor = value;
-  for (const key of path) {
-    if (!isRecord(cursor)) return undefined;
-    cursor = cursor[key];
-  }
-  return typeof cursor === "string" && cursor.trim() ? cursor : undefined;
 }
 
 function isAbortError(error: unknown): boolean {

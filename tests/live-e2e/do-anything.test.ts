@@ -1,29 +1,36 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EAKError, EAKEventTypes, EAKTimeoutError } from "../../src";
-import type { JsonObject } from "../../src";
+import { EAKError } from "../../src";
+import type { JsonObject, RunHandle, RunResult } from "../../src";
 import {
   allowLiveEnvironmentConstraint,
-  collectSomeEvents,
+  collectRunEvents,
   delegateLiveToken,
   doAnythingScopes,
-  extractId,
   liveE2EEnabled,
   liveClient,
   livePrefix,
+  openRawEventRecorder,
 } from "./helpers";
 
 const describeLiveE2E = liveE2EEnabled ? describe : describe.skip;
 
-describeLiveE2E("live e2e: Do Anything", () => {
+// The exact Wikipedia article title the browsing task below must surface.
+const EXPECTED_TITLE_RE = /universally unique identifier/i;
+
+// Live coverage of the frozen contract's mainline (public-surface doc §2/§4):
+// run() → RunHandle → wait(), token passed once at the entry call, screenshots
+// via the semantic capture switch, domain content asserted from result.output.
+describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
   let client: ReturnType<typeof liveClient>;
   let token: string;
-  let sessionId: string | undefined;
-  let runId: string | undefined;
-  let sessionReady: Promise<string | undefined> | undefined;
-  let runReady: Promise<{ sessionId: string; runId: string } | undefined> | undefined;
-  let canceled = false;
+  let run: RunHandle | undefined;
+  let runReady: Promise<RunHandle | undefined> | undefined;
+  let resultReady: Promise<RunResult | undefined> | undefined;
+  let recordedEvents = 0;
+  let savedScreenshots = 0;
+  let recordedDir: string | undefined;
 
   beforeAll(async () => {
     client = liveClient();
@@ -31,148 +38,116 @@ describeLiveE2E("live e2e: Do Anything", () => {
   });
 
   afterAll(async () => {
-    if (sessionId && runId && !canceled) {
-      await client.doAnything.api.cancel({
-        token,
-        sessionId,
-        runId,
-        reason: "sdk live e2e cleanup",
-      }).catch(() => undefined);
-    }
+    // Semantic cancel is idempotent — safe even when the run already settled.
+    await run?.cancel("sdk live e2e cleanup").catch(() => undefined);
   });
 
-  function ensureSession() {
-    sessionReady ??= (async () => {
-      const session = await allowLiveEnvironmentConstraint(
-        client.doAnything.api.createSession({
-          token,
-          name: `${livePrefix} browser session`,
-        }),
-      );
-      if (!session) return undefined;
-      sessionId = extractId(session.data, "Do Anything session");
-      return sessionId;
-    })();
-    return sessionReady;
-  }
-
+  // One run shared across the file: token passed ONCE at the entry call,
+  // every later operation goes through the handle.
   function ensureRun() {
     runReady ??= (async () => {
-      const sid = await ensureSession();
-      if (!sid) return undefined;
-      const run = await allowLiveEnvironmentConstraint(
-        client.doAnything.api.createRun({
+      const handle = await allowLiveEnvironmentConstraint(
+        client.doAnything.run({
           token,
-          sessionId: sid,
-          instruction: "Open https://en.wikipedia.org/wiki/Special:Random twice; report the two article titles. Then finish.",
-          maxDurationMinutes: 5,
-          // Subscribe screenshot events so the recording test below can save them.
-          stream: {
-            events: [
-              EAKEventTypes.RUN_ACTION_STARTED,
-              EAKEventTypes.RUN_ACTION_RESULT,
-              EAKEventTypes.RUN_SCREENSHOT,
-              EAKEventTypes.RUN_COMPLETED,
-            ],
-          },
+          // A task that REQUIRES browsing (search box interaction): plain
+          // URL-fetch phrasings get routed to the fetch/textify agents, which
+          // never produce screenshots. The answer is still deterministic —
+          // the article's exact title.
+          instruction:
+            "Open https://en.wikipedia.org in the browser, use the site search to find " +
+            "the article about the UUID standard, open it, and report the article's exact title.",
+          capture: { screenshots: true },
+          limits: { maxDurationMinutes: 5 },
         }),
       );
-      if (!run) return undefined;
-      runId = extractId(run.data, "Do Anything run");
-      return { sessionId: sid, runId };
+      run = handle ?? undefined;
+      return run;
     })();
     return runReady;
   }
 
-  it("doAnything.createSession({ name })", async () => {
-    const id = await ensureSession();
-    expect(id).toBeTruthy();
+  // One wait() shared across the file. Records the raw wire stream and the
+  // decoded per-step screenshots to disk while waiting — every semantic event
+  // carries the original wire envelope on `event.raw`, and `capture` +
+  // `onScreenshot` deliver decoded image bytes; no api.* needed.
+  function ensureResult() {
+    resultReady ??= (async () => {
+      const handle = await ensureRun();
+      if (!handle) return undefined;
+      const recorder = openRawEventRecorder(`do_anything-${handle.id}`);
+      recordedDir = recorder.dir;
+      console.log(`recording run ${handle.id} → ${recorder.dir}`);
+      const result = await handle.wait({
+        timeoutMs: Number(process.env.EAK_LIVE_RUN_AND_WAIT_TIMEOUT_MS || 360_000),
+        onEvent: (event) => recorder.record(event),
+        onScreenshot: (image) => {
+          expect(image.bytes.byteLength).toBeGreaterThan(0);
+          expect(image.mime).toMatch(/^image\//);
+          savedScreenshots++;
+          const name = `${String(savedScreenshots).padStart(4, "0")}.jpg`;
+          fs.writeFileSync(path.join(recorder.dir, name), image.bytes);
+          console.log(`  saved screenshot ${name}`);
+        },
+      });
+      recordedEvents = recorder.count();
+      console.log(
+        `recorded ${recordedEvents} events (${savedScreenshots} screenshots) → ${recorder.file}`,
+      );
+      return result;
+    })();
+    return resultReady;
+  }
+
+  it("doAnything.run({ token, instruction, capture, limits }) returns a handle", async () => {
+    const handle = await ensureRun();
+    if (!handle) return;
+    expect(handle.id).toBeTruthy();
+    expect(handle.sessionRef?.sessionId).toBeTruthy();
   });
 
-  it("doAnything.createRun({ sessionId, instruction, maxDurationMinutes })", async () => {
-    const ids = await ensureRun();
-    expect(ids?.runId).toBeTruthy();
+  it("run.status() refreshes the run without re-passing token or ids", async () => {
+    const handle = await ensureRun();
+    if (!handle) return;
+    const status = await handle.status();
+    expect(status.id).toBe(handle.id);
+    expect(status.status).toBeTruthy();
   });
 
-  it("doAnything.getRun({ sessionId, runId })", async () => {
-    const ids = await ensureRun();
-    if (!ids) return;
-    const run = await client.doAnything.api.getRun({ token, ...ids });
-    expect(run.data).toBeTruthy();
+  it("run.events() yields normalized semantic events", async () => {
+    const handle = await ensureRun();
+    if (!handle) return;
+    const events = await collectRunEvents((signal) => handle.events({ signal }), {
+      label: "doAnything run.events",
+      minEvents: 2,
+    });
+    expect(events.some((event) => event.runId === handle.id)).toBe(true);
   });
 
-  it("doAnything.events({ sessionId, runId, signal, onlyTopLevel })", async () => {
-    const ids = await ensureRun();
-    if (!ids) return;
-    await collectSomeEvents(
-      (signal) =>
-        client.doAnything.api.events({ token, ...ids, signal, onlyTopLevel: true }),
-      { label: "doAnything.events", referenceId: ids.runId },
-    );
+  it("run.wait() returns the article title, raw events and screenshots on disk", async () => {
+    const result = await ensureResult();
+    if (!result) return;
+
+    // Real domain content, not a status echo: the answer must contain the
+    // exact title of the article the agent navigated to.
+    expect(result.status).toBe("succeeded");
+    expect(JSON.stringify(result.output ?? "")).toMatch(EXPECTED_TITLE_RE);
+
+    // capture: { screenshots: true } must produce at least one decoded
+    // per-step screenshot — silently delivering none is the wire-enum
+    // foot-gun the capture switch exists to remove.
+    expect(savedScreenshots).toBeGreaterThan(0);
+    expect(recordedEvents).toBeGreaterThan(0);
+    expect(recordedDir && fs.existsSync(path.join(recordedDir, "events.jsonl"))).toBe(true);
   });
 
-  // persist the raw event stream and per-step
-  // screenshots under .secrets/runs/<sessionId>/ (override with EAK_OUT_DIR).
-  it("records the event stream and screenshots to disk", async () => {
-    const ids = await ensureRun();
-    if (!ids) return;
-    const outDir =
-      process.env.EAK_OUT_DIR || path.join(process.cwd(), ".secrets", "runs", ids.sessionId);
-    fs.mkdirSync(outDir, { recursive: true });
-    const eventsFile = path.join(outDir, "events.jsonl");
-    fs.writeFileSync(eventsFile, ""); // truncate any prior run's log
-    console.log(`recording run ${ids.runId} → ${outDir}`);
-
-    let total = 0;
-    let shots = 0;
-    const signal = AbortSignal.timeout(
-      Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 60_000),
-    );
-    try {
-      for await (const ev of client.doAnything.api.events({ token, ...ids, signal })) {
-        total++;
-        fs.appendFileSync(
-          eventsFile,
-          JSON.stringify({ receivedAt: new Date().toISOString(), ...ev }) + "\n",
-        );
-        const type = String(ev.event || "");
-        console.log(`  [${type}] ${JSON.stringify(ev.data ?? {}).slice(0, 110)}`);
-        if (type === EAKEventTypes.RUN_SCREENSHOT || type === "run.screenshot") {
-          const d = (ev.data ?? {}) as JsonObject;
-          const inner = (d.data ?? {}) as JsonObject;
-          const url = d.screenshot_url ?? inner.screenshot_url;
-          // The backend inlines the image as a data:...;base64 URI on read.
-          const base64 =
-            typeof url === "string" ? /^data:[^;,]*;base64,(.*)$/s.exec(url)?.[1] : undefined;
-          if (base64) {
-            shots++;
-            const name = `${String(shots).padStart(4, "0")}.jpg`;
-            fs.writeFileSync(path.join(outDir, name), Buffer.from(base64, "base64"));
-            console.log(`  saved screenshot ${name}`);
-          }
-        }
-        if (type === EAKEventTypes.RUN_COMPLETED || type === "run.completed" || type === "run.failed") {
-          break;
-        }
-      }
-    } catch (error) {
-      if (!signal.aborted) throw error;
-    }
-    console.log(`recorded ${total} events (${shots} screenshots) → ${outDir}`);
-    expect(total).toBeGreaterThan(0);
-  });
-
-  it("doAnything.intervene({ requestId, response })", async () => {
-    const ids = await ensureRun();
-    if (!ids) return;
+  it("run.respond() surfaces a wire error for an unknown input request", async () => {
+    const handle = await ensureRun();
+    if (!handle) return;
     const requestId = process.env.EAK_LIVE_DO_ANYTHING_REQUEST_ID || `${livePrefix}-noop`;
     try {
-      await client.doAnything.api.intervene({
-        token,
-        ...ids,
-        requestId,
-        response: { approved: true },
-      });
+      await handle.respond(requestId, { approved: true });
+      // Reaching here is only expected when a real pending request id was
+      // injected via EAK_LIVE_DO_ANYTHING_REQUEST_ID.
     } catch (error) {
       if (process.env.EAK_LIVE_DO_ANYTHING_REQUEST_ID || !(error instanceof EAKError)) {
         throw error;
@@ -182,64 +157,44 @@ describeLiveE2E("live e2e: Do Anything", () => {
     }
   });
 
-  it("doAnything.readRecording({ sessionId })", async () => {
-    const sid = await ensureSession();
-    if (!sid) return;
-    const recording = await client.doAnything.api.readRecording({ token, sessionId: sid });
-    expect(recording.data).toBeTruthy();
-  });
-
-  it("doAnything.readArtifacts({ sessionId, artifactId })", async () => {
-    const sid = await ensureSession();
-    if (!sid) return;
-    if (!process.env.EAK_LIVE_DO_ANYTHING_ARTIFACT_ID) {
-      expect("EAK_LIVE_DO_ANYTHING_ARTIFACT_ID not configured").toBeTruthy();
-      return;
-    }
-    const artifact = await client.doAnything.api.readArtifacts({
-      token,
-      sessionId: sid,
-      artifactId: process.env.EAK_LIVE_DO_ANYTHING_ARTIFACT_ID,
-    });
-    expect(artifact.data).toBeTruthy();
-  });
-
-  it("doAnything.cancel({ sessionId, runId, reason })", async () => {
-    const ids = await ensureRun();
-    if (!ids) return;
-    try {
-      await client.doAnything.api.cancel({
-        token,
-        ...ids,
-        reason: "sdk live e2e cleanup",
-      });
-    } catch (error) {
-      // The recording test rides the shared run to its terminal event, so by
-      // now the run may already be completed — cancel then 4xxes. Accept that.
-      if (!(error instanceof EAKError) || (error.status ?? 0) < 400) throw error;
-    }
-    canceled = true;
-  });
-
-  it("doAnything.run({ instruction }) + wait({ timeoutMs })", async () => {
-    const handle = await allowLiveEnvironmentConstraint(
-      client.doAnything.run({
-        token,
-        instruction: "Open https://example.com and return the page title.",
-        limits: { maxDurationMinutes: 5 },
-      }),
-    );
+  it("run.cancel() is idempotent on a settled run", async () => {
+    const handle = await ensureRun();
     if (!handle) return;
-    try {
-      const result = await handle.wait({
-        timeoutMs: Number(process.env.EAK_LIVE_RUN_AND_WAIT_TIMEOUT_MS || 60_000),
-      });
-      expect(result.runId).toBe(handle.id);
-    } catch (error) {
-      // The client-side cap elapsed — the run keeps executing server-side;
-      // clean it up so the live environment is not left with a stray run.
-      if (!(error instanceof EAKTimeoutError)) throw error;
-      await handle.cancel("sdk live e2e cleanup").catch(() => undefined);
-    }
+    await ensureResult();
+    // The contract makes cancel idempotent: cancelling a terminal run returns
+    // its terminal state instead of throwing a wire 4xx.
+    const status = await handle.cancel("sdk live e2e cleanup");
+    expect(["succeeded", "failed", "canceled"]).toContain(status.status);
+  });
+
+  it("doAnything.attach() reconnects to the run via its sessionRef", async () => {
+    const handle = await ensureRun();
+    if (!handle?.sessionRef) return;
+    const reattached = await client.doAnything.attach(handle.id, {
+      token,
+      session: handle.sessionRef,
+    });
+    expect(reattached.id).toBe(handle.id);
+    const status = await reattached.status();
+    expect(status.id).toBe(handle.id);
+  });
+
+  // Escape-hatch smoke: the wire layer (api.*) must keep working for advanced
+  // users, but it appears ONLY here — everything above is semantic. The
+  // session recording read has no semantic counterpart by design (§9 keeps
+  // readRecording wire-level).
+  it("escape hatch: api.getRun / api.readRecording still speak wire", async () => {
+    const handle = await ensureRun();
+    if (!handle?.sessionRef) return;
+    const sessionId = handle.sessionRef.sessionId;
+    const wire = await client.doAnything.api.getRun<JsonObject>({
+      token,
+      sessionId,
+      runId: handle.id,
+    });
+    expect(wire.data).toBeTruthy();
+    expect(typeof wire.data.status).toBe("string");
+    const recording = await client.doAnything.api.readRecording({ token, sessionId });
+    expect(recording.data).toBeTruthy();
   });
 });
