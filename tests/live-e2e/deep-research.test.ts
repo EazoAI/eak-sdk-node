@@ -42,7 +42,7 @@ describeLiveE2E("live e2e: Deep Research", () => {
           // Plain researchable topic — no livePrefix nonce: the topic fans out
           // into real web searches where the nonce only adds noise; run
           // traceability comes from runId.
-          topic: "Summarize the public example.com page in one paragraph",
+          topic: "simply summarize the public example.com page in one paragraph",
           outputFormat: "report",
           targetAudience: "SDK maintainers",
           requireOutlineApproval: true,

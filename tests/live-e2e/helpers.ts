@@ -16,10 +16,14 @@ export const livePrefix = `sdk-live-${Date.now()}`;
 
 export function liveClient(): EazoAgentKit {
   const host = process.env.EAK_HOST?.trim();
+  // Point WebAgent data-plane calls at a different deployment (e.g. a local
+  // backend) while delegation/token-exchange stay on the EAK gateway.
+  const webAgentBaseUrl = process.env.EAK_WEBAGENT_BASE_URL?.trim();
   return new EazoAgentKit({
     accessKey: requiredEnv("EAK_ACCESS_KEY"),
     secretKey: requiredEnv("EAK_SECRET_KEY"),
     ...(host ? { host } : {}),
+    ...(webAgentBaseUrl ? { webAgentBaseUrl } : {}),
     timeoutMs: Number(process.env.EAK_TIMEOUT_MS || 120_000),
   });
 }
