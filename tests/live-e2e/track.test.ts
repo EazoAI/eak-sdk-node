@@ -6,7 +6,6 @@ import {
   extractId,
   liveE2EEnabled,
   liveClient,
-  livePrefix,
   trackScopes,
 } from "./helpers";
 
@@ -35,7 +34,9 @@ describeLiveE2E("live e2e: Track", () => {
       const monitor = await allowLiveEnvironmentConstraint(
         client.track.createMonitor({
           token,
-          intent: `${livePrefix} monitor example.com for visible page title changes`,
+          // Plain natural-language intent — no livePrefix nonce: the intent
+          // feeds LLM alignment, and traceability comes from monitorId.
+          intent: "Monitor example.com for visible page title changes",
           notify_channel: { kind: "console_inbox" },
           schedule: { kind: "interval", interval_seconds: 3600 },
           target_urls: ["https://example.com"],

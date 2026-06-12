@@ -144,9 +144,19 @@ const run = await eak.doAnything.run({
   token,
   instruction: "Open the customer website and summarize recent product updates.",
   context: { memory: memory.data },
+  // Opt-in events (screenshots, input requests, …) are only emitted if you
+  // subscribe to them here when the run is created.
+  stream: {
+    events: [
+      EAKEventTypes.RUN_SCREENSHOT,
+      EAKEventTypes.RUN_INPUT_REQUEST,
+      EAKEventTypes.RUN_COMPLETED,
+    ],
+  },
 });
 
 // run.data is the run envelope: { run_id, session_id, ... }.
+let step = 0; // import fs from "node:fs";
 for await (const event of eak.doAnything.events({
   token,
   sessionId: run.data.session_id,
@@ -154,7 +164,12 @@ for await (const event of eak.doAnything.events({
 })) {
   // The SDK lifts the wire event type to event.event; payload is event.data.data.
   if (event.event === EAKEventTypes.RUN_SCREENSHOT) {
-    renderScreenshot(event.data);
+    // The screenshot arrives inline as a data URI:
+    //   event.data.data.screenshot_url = "data:image/jpeg;base64,<payload>"
+    // Strip the prefix and decode the base64 payload to get the image bytes.
+    const url = event.data?.data?.screenshot_url;
+    const base64 = typeof url === "string" ? /^data:[^;,]*;base64,(.*)$/s.exec(url)?.[1] : undefined;
+    if (base64) fs.writeFileSync(`step-${++step}.jpg`, Buffer.from(base64, "base64"));
   }
 
   if (event.event === EAKEventTypes.RUN_INPUT_REQUEST) {

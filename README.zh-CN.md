@@ -139,9 +139,19 @@ const run = await eak.doAnything.run({
   token,
   instruction: "打开客户官网并总结最近的产品变化。",
   context: { memory: memory.data },
+  // 截图、输入请求这类可选事件必须在建 run 时通过 stream.events 订阅，
+  // 不订阅后端不会推送。
+  stream: {
+    events: [
+      EAKEventTypes.RUN_SCREENSHOT,
+      EAKEventTypes.RUN_INPUT_REQUEST,
+      EAKEventTypes.RUN_COMPLETED,
+    ],
+  },
 });
 
 // run.data 是 run envelope:{ run_id, session_id, ... }。
+let step = 0; // import fs from "node:fs";
 for await (const event of eak.doAnything.events({
   token,
   sessionId: run.data.session_id,
@@ -149,7 +159,12 @@ for await (const event of eak.doAnything.events({
 })) {
   // SDK 把 wire 事件类型提升到 event.event;payload 在 event.data.data。
   if (event.event === EAKEventTypes.RUN_SCREENSHOT) {
-    renderScreenshot(event.data);
+    // 截图以 data URI 内联送达:
+    //   event.data.data.screenshot_url = "data:image/jpeg;base64,<payload>"
+    // 去掉前缀、解码 base64 即得到图片字节。
+    const url = event.data?.data?.screenshot_url;
+    const base64 = typeof url === "string" ? /^data:[^;,]*;base64,(.*)$/s.exec(url)?.[1] : undefined;
+    if (base64) fs.writeFileSync(`step-${++step}.jpg`, Buffer.from(base64, "base64"));
   }
 
   if (event.event === EAKEventTypes.RUN_INPUT_REQUEST) {

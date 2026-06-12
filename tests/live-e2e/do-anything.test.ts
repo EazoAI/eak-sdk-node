@@ -1,5 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EAKError } from "../../src";
+import { EAKError, EAKEventTypes } from "../../src";
+import type { JsonObject } from "../../src";
 import {
   allowLiveEnvironmentConstraint,
   collectSomeEvents,
@@ -61,8 +64,17 @@ describeLiveE2E("live e2e: Do Anything", () => {
         client.doAnything.createRun({
           token,
           sessionId: sid,
-          instruction: "Open https://example.com and report the page title.",
-          maxDurationMinutes: 1,
+          instruction: "Open https://en.wikipedia.org/wiki/Special:Random twice; report the two article titles. Then finish.",
+          maxDurationMinutes: 5,
+          // Subscribe screenshot events so the recording test below can save them.
+          stream: {
+            events: [
+              EAKEventTypes.RUN_ACTION_STARTED,
+              EAKEventTypes.RUN_ACTION_RESULT,
+              EAKEventTypes.RUN_SCREENSHOT,
+              EAKEventTypes.RUN_COMPLETED,
+            ],
+          },
         }),
       );
       if (!run) return undefined;
@@ -97,6 +109,57 @@ describeLiveE2E("live e2e: Do Anything", () => {
         client.doAnything.events({ token, ...ids, signal, onlyTopLevel: true }),
       { label: "doAnything.events", referenceId: ids.runId },
     );
+  });
+
+  // persist the raw event stream and per-step
+  // screenshots under .secrets/runs/<sessionId>/ (override with EAK_OUT_DIR).
+  it("records the event stream and screenshots to disk", async () => {
+    const ids = await ensureRun();
+    if (!ids) return;
+    const outDir =
+      process.env.EAK_OUT_DIR || path.join(process.cwd(), ".secrets", "runs", ids.sessionId);
+    fs.mkdirSync(outDir, { recursive: true });
+    const eventsFile = path.join(outDir, "events.jsonl");
+    fs.writeFileSync(eventsFile, ""); // truncate any prior run's log
+    console.log(`recording run ${ids.runId} → ${outDir}`);
+
+    let total = 0;
+    let shots = 0;
+    const signal = AbortSignal.timeout(
+      Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 60_000),
+    );
+    try {
+      for await (const ev of client.doAnything.events({ token, ...ids, signal })) {
+        total++;
+        fs.appendFileSync(
+          eventsFile,
+          JSON.stringify({ receivedAt: new Date().toISOString(), ...ev }) + "\n",
+        );
+        const type = String(ev.event || "");
+        console.log(`  [${type}] ${JSON.stringify(ev.data ?? {}).slice(0, 110)}`);
+        if (type === EAKEventTypes.RUN_SCREENSHOT || type === "run.screenshot") {
+          const d = (ev.data ?? {}) as JsonObject;
+          const inner = (d.data ?? {}) as JsonObject;
+          const url = d.screenshot_url ?? inner.screenshot_url;
+          // The backend inlines the image as a data:...;base64 URI on read.
+          const base64 =
+            typeof url === "string" ? /^data:[^;,]*;base64,(.*)$/s.exec(url)?.[1] : undefined;
+          if (base64) {
+            shots++;
+            const name = `${String(shots).padStart(4, "0")}.jpg`;
+            fs.writeFileSync(path.join(outDir, name), Buffer.from(base64, "base64"));
+            console.log(`  saved screenshot ${name}`);
+          }
+        }
+        if (type === EAKEventTypes.RUN_COMPLETED || type === "run.completed" || type === "run.failed") {
+          break;
+        }
+      }
+    } catch (error) {
+      if (!signal.aborted) throw error;
+    }
+    console.log(`recorded ${total} events (${shots} screenshots) → ${outDir}`);
+    expect(total).toBeGreaterThan(0);
   });
 
   it("doAnything.intervene({ requestId, response })", async () => {
@@ -144,11 +207,17 @@ describeLiveE2E("live e2e: Do Anything", () => {
   it("doAnything.cancel({ sessionId, runId, reason })", async () => {
     const ids = await ensureRun();
     if (!ids) return;
-    await client.doAnything.cancel({
-      token,
-      ...ids,
-      reason: "sdk live e2e cleanup",
-    });
+    try {
+      await client.doAnything.cancel({
+        token,
+        ...ids,
+        reason: "sdk live e2e cleanup",
+      });
+    } catch (error) {
+      // The recording test rides the shared run to its terminal event, so by
+      // now the run may already be completed — cancel then 4xxes. Accept that.
+      if (!(error instanceof EAKError) || (error.status ?? 0) < 400) throw error;
+    }
     canceled = true;
   });
 

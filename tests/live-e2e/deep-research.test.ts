@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EAKError } from "../../src";
 import {
@@ -9,7 +11,6 @@ import {
   firstArtifactId,
   liveE2EEnabled,
   liveClient,
-  livePrefix,
 } from "./helpers";
 
 const describeLiveE2E = liveE2EEnabled ? describe : describe.skip;
@@ -38,7 +39,10 @@ describeLiveE2E("live e2e: Deep Research", () => {
       const run = await allowLiveEnvironmentConstraint(
         client.deepResearch.run({
           token,
-          topic: `${livePrefix}: summarize the public example.com page in one paragraph`,
+          // Plain researchable topic — no livePrefix nonce: the topic fans out
+          // into real web searches where the nonce only adds noise; run
+          // traceability comes from runId.
+          topic: "Summarize the public example.com page in one paragraph",
           outputFormat: "report",
           targetAudience: "SDK maintainers",
           requireOutlineApproval: true,
@@ -143,10 +147,52 @@ describeLiveE2E("live e2e: Deep Research", () => {
     expect(artifact.data).toBeTruthy();
   });
 
+  // Same recording pattern as do-anything / web-search: persist the raw event
+  // stream under .secrets/runs/deep_research-<runId>/ (override with
+  // EAK_OUT_DIR) and echo each event to the console as it arrives.
+  it("records the event stream to disk", async () => {
+    const id = await ensureRun();
+    if (!id) return;
+    const outDir =
+      process.env.EAK_OUT_DIR ||
+      path.join(process.cwd(), ".secrets", "runs", `deep_research-${id}`);
+    fs.mkdirSync(outDir, { recursive: true });
+    const eventsFile = path.join(outDir, "events.jsonl");
+    fs.writeFileSync(eventsFile, ""); // truncate any prior run's log
+    console.log(`recording run ${id} → ${outDir}`);
+
+    let total = 0;
+    const signal = AbortSignal.timeout(
+      Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 60_000),
+    );
+    try {
+      for await (const ev of client.deepResearch.events({ token, runId: id, signal })) {
+        total++;
+        fs.appendFileSync(
+          eventsFile,
+          JSON.stringify({ receivedAt: new Date().toISOString(), ...ev }) + "\n",
+        );
+        const type = String(ev.event || "");
+        console.log(`  [${type}] ${JSON.stringify(ev.data ?? {}).slice(0, 110)}`);
+        if (type === "run.completed" || type === "run.failed") break;
+      }
+    } catch (error) {
+      if (!signal.aborted) throw error;
+    }
+    console.log(`recorded ${total} events → ${eventsFile}`);
+    expect(total).toBeGreaterThan(0);
+  });
+
   it("deepResearch.cancel({ runId })", async () => {
     const id = await ensureRun();
     if (!id) return;
-    await client.deepResearch.cancel({ token, runId: id });
+    try {
+      await client.deepResearch.cancel({ token, runId: id });
+    } catch (error) {
+      // The recording test may have ridden the run to its terminal event —
+      // canceling a finished run 4xxes. Accept that.
+      if (!(error instanceof EAKError) || (error.status ?? 0) < 400) throw error;
+    }
     canceled = true;
   });
 });

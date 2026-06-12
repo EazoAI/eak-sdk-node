@@ -100,6 +100,26 @@ describeLiveE2E("live e2e: Web Search", () => {
         );
         const type = String(ev.event || "");
         console.log(`  [${type}] ${JSON.stringify(ev.data ?? {}).slice(0, 110)}`);
+        if (type === "run.completed") {
+          // The run was created with maxResultsPerQuery: 1 — assert the
+          // server actually honored the cap, not just accepted the field.
+          const results = (ev.data as { output?: { results?: unknown[] } } | undefined)?.output
+            ?.results;
+          if (Array.isArray(results)) {
+            expect(results.length).toBeLessThanOrEqual(1);
+            // The run was created with siteWhitelist — every returned URL
+            // must be on (or under) one of the whitelisted hosts.
+            const whitelist = ["eazo.ai", "authing.cn"];
+            for (const item of results as Array<{ url?: string }>) {
+              if (!item?.url) continue;
+              const host = new URL(item.url).hostname.toLowerCase();
+              expect(
+                whitelist.some((d) => host === d || host.endsWith(`.${d}`)),
+                `result ${item.url} is off-whitelist`,
+              ).toBe(true);
+            }
+          }
+        }
         if (type === "run.completed" || type === "run.failed") break;
       }
     } catch (error) {
