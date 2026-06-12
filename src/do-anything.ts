@@ -30,8 +30,6 @@ export interface DoAnythingSnapshot {
   title?: string;
   /** The screenshot image — carried in JSON (base64) and/or by reference. */
   image?: SnapshotImage;
-  /** Important interactive/visible elements extracted from the page. */
-  elements?: SnapshotElement[];
   /** What the agent was doing at this step. */
   action?: SnapshotAction;
 }
@@ -47,17 +45,6 @@ export interface SnapshotImage {
   artifactId?: string;
   width?: number;
   height?: number;
-}
-
-export interface SnapshotElement {
-  /** Stable index the agent uses to reference this element. */
-  index?: number;
-  /** "button" | "link" | "input" | ... */
-  role?: string;
-  /** Visible label/text. */
-  label?: string;
-  /** Bounding box in viewport coordinates. */
-  bbox?: { x: number; y: number; width: number; height: number };
 }
 
 export interface SnapshotAction {

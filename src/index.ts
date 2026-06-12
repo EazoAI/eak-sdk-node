@@ -39,7 +39,6 @@ export type {
   DoAnythingSnapshot,
   RunLimits,
   SnapshotImage,
-  SnapshotElement,
   SnapshotAction,
 } from "./do-anything";
 export type { WebSearchAttachOptions, WebSearchRunOptions } from "./web-search";
