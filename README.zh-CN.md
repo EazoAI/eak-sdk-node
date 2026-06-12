@@ -160,7 +160,7 @@ const followUp = await eak.doAnything.run({
   instruction: "再看一眼定价页。",
   session: run.sessionRef, // 复用同一个浏览器会话
 });
-const reattached = await eak.doAnything.attach(run.id, { token, session: run.sessionRef });
+const reattached = await eak.doAnything.attach(run.id, { token }); // 仅凭 run id 重连
 ```
 
 这里的关键点不是方法有多少，而是每一步都有边界：Agent 只能做 token 里 scope 允许的事情，授权过期后不能继续执行，后端可以通过 `auditId` 追溯这次行为。
@@ -465,7 +465,7 @@ await run.cancel(reason?)               // 幂等
 
 ### Wire 级逃生舱
 
-与后端 HTTP 契约一一对应的低层方法保留在 `eak.<product>.api.*` 下（如 `eak.doAnything.api.createSession`、`eak.deepResearch.api.followUp`、`eak.track.api.createMonitor`），配套 `EAKEventTypes` 常量和语义事件上的 `event.raw`。这些方法直接镜像 wire 形状——snake_case 字段、双层 envelope 事件、session+run 双 ID 寻址——形状会随 API 演进变化，不在冻结的公开契约范围内。
+与后端 HTTP 契约一一对应的低层方法保留在 `eak.<product>.api.*` 下（如 `eak.doAnything.api.createSession`、`eak.deepResearch.api.followUp`、`eak.track.api.createMonitor`），配套 `EAKEventTypes` 常量和语义事件上的 `event.raw`。这些方法直接镜像 wire 形状——snake_case 字段、双层 envelope 事件、run 操作统一走 `/{product}/runs/{run_id}` 单 ID 寻址——形状会随 API 演进变化，不在冻结的公开契约范围内。
 
 Browser Use、Site Login 的 scope 已预留，但产品运行时 SDK 方法导出前不作为公开方法说明。
 

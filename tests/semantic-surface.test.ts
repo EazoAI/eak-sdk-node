@@ -166,13 +166,10 @@ describe("delegateToken semantic enhancements", () => {
 // ---------------------------------------------------------------------------
 
 describe("doAnything.run → RunHandle", () => {
-  it("creates session + run, routes session-level options, and subscribes core events", async () => {
-    const { client, calls } = makeClient((call) => {
-      if (call.pathname.endsWith("/do_anything/sessions")) {
-        return jsonResponse({ data: { id: "sess_1" } });
-      }
-      return jsonResponse({ data: { run_id: "run_1", session_id: "sess_1" } });
-    });
+  it("creates the run in one call and maps every knob onto the single create body", async () => {
+    const { client, calls } = makeClient(() =>
+      jsonResponse({ data: { run_id: "run_1", session_id: "sess_1", status: "pending" } }),
+    );
 
     const run = await client.doAnything.run({
       token: TOKEN,
@@ -183,39 +180,45 @@ describe("doAnything.run → RunHandle", () => {
     });
 
     expect(run.id).toBe("run_1");
+    // The create response IS the run envelope — session_id is the reuse handle.
     expect(run.sessionRef).toEqual({ sessionId: "sess_1" });
 
-    const sessionCall = calls.find((c) => c.pathname.endsWith("/do_anything/sessions"));
-    expect(sessionCall?.body).toEqual({
+    expect(calls.map((c) => `${c.method} ${c.pathname}`)).toEqual([
+      "POST /api/v1/projects/tenant_1/do_anything/runs",
+    ]);
+    // Exact body: no session create call, no write-time `stream` subscription.
+    expect(calls[0].body).toEqual({
+      instructions: "open the docs",
       profile_id: "profile_1",
       max_duration_minutes: 7,
     });
-
-    const runCall = calls.find((c) => c.pathname.endsWith("/sessions/sess_1/runs"));
-    const runBody = runCall?.body as { instructions: string; stream: { events: string[] } };
-    expect(runBody.instructions).toBe("open the docs");
-    // Core events are always subscribed; screenshots only because capture asked.
-    for (const core of ["run.status_changed", "run.input_request", "run.completed"]) {
-      expect(runBody.stream.events).toContain(core);
-    }
-    expect(runBody.stream.events).toContain("run.screenshot");
   });
 
-  it("does not subscribe screenshots without capture.screenshots", async () => {
+  it("capture.screenshots flips read-time filtering on the events stream", async () => {
     const { client, calls } = makeClient((call) => {
-      if (call.pathname.endsWith("/do_anything/sessions")) {
-        return jsonResponse({ data: { id: "sess_1" } });
+      if (call.pathname.endsWith("/events")) {
+        return sseResponse(frame(1, "run.completed", { terminal_reason: "done" }));
       }
-      return jsonResponse({ data: { run_id: "run_1" } });
+      return jsonResponse({ data: { run_id: "run_1", session_id: "sess_1" } });
     });
 
-    await client.doAnything.run({ token: TOKEN, instruction: "open the docs" });
-    const runBody = calls.at(-1)?.body as { stream: { events: string[] } };
-    expect(runBody.stream.events).not.toContain("run.screenshot");
+    const withoutCapture = await client.doAnything.run({ token: TOKEN, instruction: "go" });
+    for await (const event of withoutCapture.events()) void event;
+    expect(calls.at(-1)?.url).toContain("include_screenshots=false");
+
+    const withCapture = await client.doAnything.run({
+      token: TOKEN,
+      instruction: "go",
+      capture: { screenshots: true },
+    });
+    for await (const event of withCapture.events()) void event;
+    expect(calls.at(-1)?.url).not.toContain("include_screenshots");
   });
 
-  it("reuses the session from run({ session }) without creating a new one", async () => {
-    const { client, calls } = makeClient(() => jsonResponse({ data: { run_id: "run_2" } }));
+  it("run({ session }) creates a follow-up run via session_id in the create body", async () => {
+    const { client, calls } = makeClient(() =>
+      jsonResponse({ data: { run_id: "run_2", session_id: "sess_prior" } }),
+    );
 
     const run = await client.doAnything.run({
       token: TOKEN,
@@ -226,15 +229,29 @@ describe("doAnything.run → RunHandle", () => {
     expect(run.id).toBe("run_2");
     expect(run.sessionRef).toEqual({ sessionId: "sess_prior" });
     expect(calls.map((c) => `${c.method} ${c.pathname}`)).toEqual([
-      "POST /api/v1/projects/tenant_1/do_anything/sessions/sess_prior/runs",
+      "POST /api/v1/projects/tenant_1/do_anything/runs",
     ]);
+    expect(calls[0].body).toEqual({ instructions: "follow up", session_id: "sess_prior" });
+  });
+
+  it("fails loudly on platform-decided knobs the wire create body cannot carry", async () => {
+    const { client, calls } = makeClient(() => jsonResponse({ data: { run_id: "run_1" } }));
+
+    for (const options of [
+      { proxyCountryCode: "US" },
+      { model: "some-model" },
+      { callbackUrl: "https://app.example.com/hook" },
+      { limits: { maxCostUsd: "5.00" } },
+    ]) {
+      await expect(
+        client.doAnything.run({ token: TOKEN, instruction: "go", ...options }),
+      ).rejects.toBeInstanceOf(EAKValidationError);
+    }
+    expect(calls).toHaveLength(0); // rejected locally — nothing was silently dropped
   });
 
   it("normalizes events: semantic types, camelCase data, raw escape hatch, terminal auto-end", async () => {
     const { client } = makeClient((call) => {
-      if (call.pathname.endsWith("/do_anything/sessions")) {
-        return jsonResponse({ data: { id: "sess_1" } });
-      }
       if (call.pathname.endsWith("/events")) {
         return sseResponse(
           frame(1, "run.status_changed", { status: "running" }) +
@@ -279,9 +296,6 @@ describe("doAnything.run → RunHandle", () => {
         step: 3,
       }) + frame(2, "run.completed", { terminal_reason: "done" });
     const { client } = makeClient((call) => {
-      if (call.pathname.endsWith("/do_anything/sessions")) {
-        return jsonResponse({ data: { id: "sess_1" } });
-      }
       if (call.pathname.endsWith("/events")) return sseResponse(sse);
       return jsonResponse({ data: { run_id: "run_1" } });
     });
@@ -308,9 +322,6 @@ describe("doAnything.run → RunHandle", () => {
 
   it("demotes sub-run terminal events to progress so they never end the stream", async () => {
     const { client } = makeClient((call) => {
-      if (call.pathname.endsWith("/do_anything/sessions")) {
-        return jsonResponse({ data: { id: "sess_1" } });
-      }
       if (call.pathname.endsWith("/events")) {
         return sseResponse(
           frame(1, "run.completed", { terminal_reason: "done" }, { task_id: "sub_1" }) +
@@ -331,9 +342,6 @@ describe("doAnything.run → RunHandle", () => {
 
   it("wait() drives callbacks and settles from the run detail envelope", async () => {
     const { client } = makeClient((call) => {
-      if (call.pathname.endsWith("/do_anything/sessions")) {
-        return jsonResponse({ data: { id: "sess_1" } });
-      }
       if (call.pathname.endsWith("/events")) {
         return sseResponse(
           frame(1, "run.input_request", { request_id: "req_1", live_url: "https://live" }) +
@@ -383,9 +391,6 @@ describe("doAnything.run → RunHandle", () => {
     let eventsCall = 0;
     const lastEventIds: Array<string | undefined> = [];
     const { client } = makeClient((call) => {
-      if (call.pathname.endsWith("/do_anything/sessions")) {
-        return jsonResponse({ data: { id: "sess_1" } });
-      }
       if (call.pathname.endsWith("/events")) {
         eventsCall += 1;
         lastEventIds.push(call.headers["last-event-id"]);
@@ -424,9 +429,6 @@ describe("doAnything.run → RunHandle", () => {
 
   it("cancel() is idempotent: a 4xx on an already-terminal run returns the terminal state", async () => {
     const { client } = makeClient((call) => {
-      if (call.pathname.endsWith("/do_anything/sessions")) {
-        return jsonResponse({ data: { id: "sess_1" } });
-      }
       if (call.pathname.endsWith("/cancel")) {
         return jsonResponse(
           { detail: { code: "conflict", message: "run already terminal" } },
@@ -448,9 +450,6 @@ describe("doAnything.run → RunHandle", () => {
 
   it("cancel() still throws on permission errors", async () => {
     const { client } = makeClient((call) => {
-      if (call.pathname.endsWith("/do_anything/sessions")) {
-        return jsonResponse({ data: { id: "sess_1" } });
-      }
       if (call.pathname.endsWith("/cancel")) {
         return jsonResponse(
           { detail: { code: "permission_denied", message: "missing scope" } },
@@ -467,9 +466,6 @@ describe("doAnything.run → RunHandle", () => {
   it("respond() derives the wire intervene kind from response presence", async () => {
     const bodies: unknown[] = [];
     const { client } = makeClient((call) => {
-      if (call.pathname.endsWith("/do_anything/sessions")) {
-        return jsonResponse({ data: { id: "sess_1" } });
-      }
       if (call.pathname.endsWith("/intervene")) {
         bodies.push(call.body);
         return jsonResponse({ data: { ok: true } });
@@ -487,24 +483,24 @@ describe("doAnything.run → RunHandle", () => {
     ]);
   });
 
-  it("attach() requires the run's session on the current wire and verifies the run", async () => {
+  it("attach() resolves by run id alone, verifies the run, and adopts its sessionRef", async () => {
     const { client, calls } = makeClient(() =>
       jsonResponse({ data: { run_id: "run_1", session_id: "sess_1", status: "running" } }),
     );
 
-    await expect(
-      client.doAnything.attach("run_1", { token: TOKEN } as never),
-    ).rejects.toBeInstanceOf(EAKValidationError);
-    expect(calls).toHaveLength(0);
+    const run = await client.doAnything.attach("run_1", { token: TOKEN });
+    expect(run.id).toBe("run_1");
+    expect(run.sessionRef).toEqual({ sessionId: "sess_1" }); // adopted from the detail
+    expect(calls.map((c) => `${c.method} ${c.pathname}`)).toEqual([
+      "GET /api/v1/projects/tenant_1/do_anything/runs/run_1",
+    ]);
 
-    const run = await client.doAnything.attach("run_1", {
+    // A caller that still holds a sessionRef may pass it — accepted, not required.
+    const withSession = await client.doAnything.attach("run_1", {
       token: TOKEN,
       session: { sessionId: "sess_1" },
     });
-    expect(run.id).toBe("run_1");
-    expect(calls.map((c) => `${c.method} ${c.pathname}`)).toEqual([
-      "GET /api/v1/projects/tenant_1/do_anything/sessions/sess_1/runs/run_1",
-    ]);
+    expect(withSession.sessionRef).toEqual({ sessionId: "sess_1" });
   });
 });
 

@@ -103,8 +103,8 @@ function createHarness() {
       );
     }
 
-    if (url.pathname.includes("/do_anything/sessions") && url.pathname.endsWith("/runs")) {
-      return jsonResponse({ data: { run_id: "run_matrix" } });
+    if (url.pathname.endsWith("/do_anything/runs") && call.method === "POST") {
+      return jsonResponse({ data: { run_id: "run_matrix", session_id: "sess_matrix" } });
     }
 
     if (url.pathname.endsWith("/do_anything/sessions")) {
@@ -574,12 +574,10 @@ describe("complete public method coverage matrix", () => {
           instruction: "open eazo.ai",
           profileId: "profile_matrix",
           workspaceId: "workspace_matrix",
-          proxyCountryCode: "US",
           keepAlive: true,
           allowedActions: ["navigate"],
           limits: { maxDurationMinutes: 1 },
           outputSchema: { type: "object" },
-          callbackUrl: "https://app.example.com/hooks/agent",
         });
         expect(handle.id).toBe("run_matrix");
         expect(handle.sessionRef).toEqual({ sessionId: "sess_matrix" });
@@ -589,17 +587,15 @@ describe("complete public method coverage matrix", () => {
             observed.push("event");
           },
         });
-        await h.client.doAnything.api.getRun({ token, sessionId: "sess_matrix", runId: "run_matrix" });
+        await h.client.doAnything.api.getRun({ token, runId: "run_matrix" });
         await h.client.doAnything.api.intervene({
           token,
-          sessionId: "sess_matrix",
           runId: "run_matrix",
           requestId: "input_matrix",
           response: "approve",
         });
         await h.client.doAnything.api.cancel({
           token,
-          sessionId: "sess_matrix",
           runId: "run_matrix",
           reason: "cleanup",
         });
@@ -611,36 +607,33 @@ describe("complete public method coverage matrix", () => {
         await h.client.doAnything.api.readRecording({ token, sessionId: "sess_matrix" });
 
         expect(observed).toContain("event");
-        // Session-level options ride on the session create body; run-level
-        // options (and the always-on core event subscription) on the run body.
-        expect(h.calls.find((call) => call.pathname.endsWith("/do_anything/sessions"))?.body).toMatchObject({
+        // Every knob — session-level included — rides on the single create
+        // body; there is no separate session create and no write-time
+        // `stream` event subscription.
+        expect(
+          h.calls.find((call) => call.pathname.endsWith("/do_anything/runs"))?.body,
+        ).toEqual({
+          instructions: "open eazo.ai",
           profile_id: "profile_matrix",
           workspace_id: "workspace_matrix",
-          proxy_country_code: "US",
           keep_alive: true,
+          allowed_actions: ["navigate"],
           max_duration_minutes: 1,
           output_schema: { type: "object" },
         });
-        expect(h.calls.find((call) => call.pathname.endsWith("/runs"))?.body).toMatchObject({
-          instructions: "open eazo.ai",
-          allowed_actions: ["navigate"],
-          callback_url: "https://app.example.com/hooks/agent",
-          stream: { events: expect.arrayContaining(["run.completed"]) },
-        });
         expect(h.calls.map((call) => `${call.method} ${call.pathname}`)).toEqual(
           expect.arrayContaining([
-            "POST /api/v1/projects/tenant_matrix/do_anything/sessions",
-            "POST /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs",
-            "GET /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs/run_matrix",
-            "POST /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs/run_matrix/intervene",
-            "POST /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs/run_matrix/cancel",
+            "POST /api/v1/projects/tenant_matrix/do_anything/runs",
+            "GET /api/v1/projects/tenant_matrix/do_anything/runs/run_matrix",
+            "POST /api/v1/projects/tenant_matrix/do_anything/runs/run_matrix/intervene",
+            "POST /api/v1/projects/tenant_matrix/do_anything/runs/run_matrix/cancel",
             "GET /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/artifacts/artifact_matrix",
             "GET /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/recording",
           ]),
         );
         expect(
           h.calls.find((call) =>
-            call.pathname.endsWith("/do_anything/sessions/sess_matrix/runs/run_matrix/intervene"),
+            call.pathname.endsWith("/do_anything/runs/run_matrix/intervene"),
           )?.body,
         ).toEqual({
           kind: "answer_input_request",

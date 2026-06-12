@@ -165,7 +165,7 @@ const followUp = await eak.doAnything.run({
   instruction: "Now check the pricing page too.",
   session: run.sessionRef, // reuse the same browser session
 });
-const reattached = await eak.doAnything.attach(run.id, { token, session: run.sessionRef });
+const reattached = await eak.doAnything.attach(run.id, { token }); // re-attach by run id alone
 ```
 
 ## Authorization Model
@@ -468,7 +468,7 @@ await run.cancel(reason?)               // idempotent
 
 ### Wire-Level Escape Hatch
 
-The 1:1 low-level methods live under `eak.<product>.api.*` (e.g. `eak.doAnything.api.createSession`, `eak.deepResearch.api.followUp`, `eak.track.api.createMonitor`), together with `EAKEventTypes` and `event.raw` on semantic events. These mirror the backend HTTP contract directly — snake_case fields, double-envelope events, session+run double addressing — and their shapes may evolve with the API. They are not part of the frozen public contract.
+The 1:1 low-level methods live under `eak.<product>.api.*` (e.g. `eak.doAnything.api.createSession`, `eak.deepResearch.api.followUp`, `eak.track.api.createMonitor`), together with `EAKEventTypes` and `event.raw` on semantic events. These mirror the backend HTTP contract directly — snake_case fields, double-envelope events, single-ID `/{product}/runs/{run_id}` addressing for run operations — and their shapes may evolve with the API. They are not part of the frozen public contract.
 
 Browser Use and Site Login scopes are reserved until their product runtime SDK methods are exported.
 

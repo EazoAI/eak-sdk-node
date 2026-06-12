@@ -1159,10 +1159,10 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.doAnything.api.createRun({ token: delegationToken, sessionId: "sess_1", instruction: "open docs" });
-    await client.doAnything.api.getRun({ token: delegationToken, sessionId: "sess_1", runId: "run_1" });
-    await client.doAnything.api.cancel({ token: delegationToken, sessionId: "sess_1", runId: "run_1" });
-    await client.doAnything.api.intervene({ token: delegationToken, sessionId: "sess_1", runId: "run_1", text: "continue" });
+    await client.doAnything.api.createRun({ token: delegationToken, instruction: "open docs" });
+    await client.doAnything.api.getRun({ token: delegationToken, runId: "run_1" });
+    await client.doAnything.api.cancel({ token: delegationToken, runId: "run_1" });
+    await client.doAnything.api.intervene({ token: delegationToken, runId: "run_1", text: "continue" });
     await client.webSearch.api.run({ token: delegationToken, query: "EAK" });
     await client.webSearch.api.get({ token: delegationToken, runId: "search_1" });
     await client.webSearch.api.cancel({ token: delegationToken, runId: "search_1" });
@@ -1209,12 +1209,11 @@ describe("EazoAgentKit", () => {
 
     await client.doAnything.api.createRun({
       token,
-      sessionId: "sess_1",
       instructions: "open the site",
     });
 
     expect(seen.url).toBe(
-      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions/sess_1/runs",
+      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/runs",
     );
     expect((seen.init?.headers as Record<string, string>).authorization).toBe(`Bearer ${token}`);
     expect(JSON.parse(String(seen.init?.body))).toEqual({ instructions: "open the site" });
@@ -1237,14 +1236,13 @@ describe("EazoAgentKit", () => {
 
     await client.doAnything.api.intervene({
       token,
-      sessionId: "sess_1",
       runId: "run_1",
       requestId: "input_1",
       response: "please confirm",
     });
 
     expect(seen.url).toBe(
-      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions/sess_1/runs/run_1/intervene",
+      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/runs/run_1/intervene",
     );
     expect(seen.init?.method).toBe("POST");
     expect(JSON.parse(String(seen.init?.body))).toEqual({
@@ -1277,7 +1275,7 @@ describe("EazoAgentKit", () => {
     expect(seen.init?.method).toBe("GET");
   });
 
-  it("offers a doAnything.run helper that creates a session then a run", async () => {
+  it("offers a doAnything.run helper that creates the run in a single call", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const urls: string[] = [];
     const bodies: unknown[] = [];
@@ -1289,10 +1287,7 @@ describe("EazoAgentKit", () => {
       fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
         urls.push(String(url));
         bodies.push(init?.body ? JSON.parse(String(init.body)) : undefined);
-        if (String(url).endsWith("/do_anything/sessions")) {
-          return jsonResponse({ data: { id: "sess_auto" } });
-        }
-        return jsonResponse({ data: { id: "run_auto" } });
+        return jsonResponse({ data: { run_id: "run_auto", session_id: "sess_auto" } });
       }) as typeof fetch,
     });
 
@@ -1305,13 +1300,10 @@ describe("EazoAgentKit", () => {
     expect(run.id).toBe("run_auto");
     expect(run.sessionRef).toEqual({ sessionId: "sess_auto" });
     expect(urls).toEqual([
-      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions",
-      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions/sess_auto/runs",
+      "https://eak.example.com/api/v1/projects/tenant_1/do_anything/runs",
     ]);
-    expect(bodies[1]).toMatchObject({
-      instructions: "open the docs",
-      stream: { events: expect.arrayContaining([EAKEventTypes.RUN_SCREENSHOT]) },
-    });
+    // No write-time `stream` subscription — capture is read-time filtering.
+    expect(bodies[0]).toEqual({ instructions: "open the docs" });
   });
 
   it("maps webSearch query sugar to the backend queries contract", async () => {
@@ -1362,7 +1354,6 @@ describe("EazoAgentKit", () => {
     const events = [];
     for await (const event of client.doAnything.api.events({
       token,
-      sessionId: "sess_1",
       runId: "run_1",
       lastEventId: "0",
     })) {
@@ -1370,7 +1361,7 @@ describe("EazoAgentKit", () => {
     }
 
     expect(seen.url).toBe(
-      "https://eak.example.com/workspace/api/v1/projects/tenant_1/do_anything/sessions/sess_1/runs/run_1/events",
+      "https://eak.example.com/workspace/api/v1/projects/tenant_1/do_anything/runs/run_1/events",
     );
     expect(seen.headers?.["last-event-id"]).toBe("0");
     expect(events).toEqual([
@@ -1398,7 +1389,6 @@ describe("EazoAgentKit", () => {
     const events = [];
     for await (const event of client.doAnything.api.events({
       token,
-      sessionId: "sess_1",
       runId: "run_1",
     })) {
       events.push(event);
@@ -1461,7 +1451,6 @@ describe("EazoAgentKit", () => {
     const events = [];
     for await (const event of client.doAnything.api.events({
       token,
-      sessionId: "sess_1",
       runId: "run_1",
     })) {
       events.push(event);
@@ -1494,7 +1483,6 @@ describe("EazoAgentKit", () => {
     const ids: (string | undefined)[] = [];
     for await (const event of client.doAnything.api.events({
       token,
-      sessionId: "sess_1",
       runId: "run_1",
       onlyTopLevel: true,
     })) {
@@ -1545,7 +1533,6 @@ describe("EazoAgentKit", () => {
     const events = [];
     for await (const event of client.doAnything.api.events({
       token,
-      sessionId: "sess_1",
       runId: "run_1",
     })) {
       events.push(event.event);
@@ -1565,14 +1552,11 @@ describe("EazoAgentKit", () => {
       webAgentBaseUrl: "https://eak.example.com",
       fetch: (async (url: URL | RequestInfo, init?: RequestInit) => {
         const u = String(url);
-        if (u.endsWith("/do_anything/sessions")) {
-          return jsonResponse({ data: { id: "sess_1" } });
-        }
-        if (u.endsWith("/sessions/sess_1/runs") && init?.method === "POST") {
+        if (u.endsWith("/do_anything/runs") && init?.method === "POST") {
           return jsonResponse({ data: { run_id: "run_1", session_id: "sess_1" } });
         }
         // getRun (GET run-detail): the canonical envelope with cost / steps.
-        if (u.endsWith("/sessions/sess_1/runs/run_1")) {
+        if (u.endsWith("/do_anything/runs/run_1")) {
           return jsonResponse({
             data: {
               run_id: "run_1",
@@ -1762,7 +1746,8 @@ describe("EazoAgentKit", () => {
       instruction: "open the site",
     });
 
-    expect(seen.body).toEqual({ instructions: "open the site" });
+    // `sessionId` is a body field on the single-ID create (follow-up mode).
+    expect(seen.body).toEqual({ instructions: "open the site", session_id: "sess_1" });
   });
 
   // -------------------------------------------------------------------------

@@ -167,16 +167,15 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
     expect(["succeeded", "failed", "canceled"]).toContain(status.status);
   });
 
-  it("doAnything.attach() reconnects to the run via its sessionRef", async () => {
+  it("doAnything.attach() reconnects to the run by id alone", async () => {
     const handle = await ensureRun();
-    if (!handle?.sessionRef) return;
-    const reattached = await client.doAnything.attach(handle.id, {
-      token,
-      session: handle.sessionRef,
-    });
+    if (!handle) return;
+    const reattached = await client.doAnything.attach(handle.id, { token });
     expect(reattached.id).toBe(handle.id);
     const status = await reattached.status();
     expect(status.id).toBe(handle.id);
+    // sessionRef is adopted from the run detail envelope.
+    expect(reattached.sessionRef?.sessionId).toBeTruthy();
   });
 
   // Escape-hatch smoke: the wire layer (api.*) must keep working for advanced
@@ -189,7 +188,6 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
     const sessionId = handle.sessionRef.sessionId;
     const wire = await client.doAnything.api.getRun<JsonObject>({
       token,
-      sessionId,
       runId: handle.id,
     });
     expect(wire.data).toBeTruthy();
