@@ -76,7 +76,7 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
       recordedDir = recorder.dir;
       console.log(`recording run ${run.id} → ${recorder.dir}`);
       const result = await run.wait({
-        timeoutMs: Number(process.env.EAK_LIVE_RUN_AND_WAIT_TIMEOUT_MS || 360_000),
+        timeoutMs: Number(process.env.EAK_LIVE_WAIT_TIMEOUT_MS || 360_000),
         onEvent: (event) => recorder.record(event),
         onScreenshot: (image) => {
           expect(image.bytes.byteLength).toBeGreaterThan(0);
