@@ -71,7 +71,8 @@ The npm package includes the `skills/` directory, but the recommended Skill inst
 Start with a server-side SDK instance. AK/SK stays on your trusted server for both management-plane calls and runtime product delegation.
 
 ```ts
-import { EazoAgentKit, EAKEventTypes, EAKScopeBundles, EAKScopes } from "@eazo/eak";
+import fs from "node:fs";
+import { EazoAgentKit } from "@eazo/eak";
 
 const eak = new EazoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
@@ -119,79 +120,52 @@ if (!userId) {
   throw new Error("EAK_USER_ID must be a real GenAuth user id from the credential-bound userpool");
 }
 
-const delegation = await eak.delegateToken({
-  userId,
-  agent: "sales-assistant",
-  scopes: [
-    ...EAKScopeBundles.GUMEM_SESSION_RECALL,
-    EAKScopes.WEB_SEARCH_RUN,
-    EAKScopes.WEB_SEARCH_READ,
-    EAKScopes.DO_ANYTHING_RUN,
-    EAKScopes.DO_ANYTHING_READ,
-  ],
-  mode: "silent",
-});
-
-const token = delegation.data.token;
-
-const memory = await eak.gumem.recall({
-  token,
-  sessionId: "customer-brief",
-  query: "What user preferences should the assistant remember?",
-});
+// `products` is per-product authorization sugar; `agent` defaults to "sdk".
+const { token } = (
+  await eak.delegateToken({
+    user: { subject: userId },
+    products: ["doAnything"],
+  })
+).data;
 
 const run = await eak.doAnything.run({
-  token,
+  token, // passed once — the handle holds it; handle methods never take a token
   instruction: "Open the customer website and summarize recent product updates.",
-  context: { memory: memory.data },
-  // Opt-in events (screenshots, input requests, …) are only emitted if you
-  // subscribe to them here when the run is created.
-  stream: {
-    events: [
-      EAKEventTypes.RUN_SCREENSHOT,
-      EAKEventTypes.RUN_INPUT_REQUEST,
-      EAKEventTypes.RUN_COMPLETED,
-    ],
-  },
+  capture: { screenshots: true },
 });
 
-// run.data is the run envelope: { run_id, session_id, ... }.
-let step = 0; // import fs from "node:fs";
-for await (const event of eak.doAnything.events({
-  token,
-  sessionId: run.data.session_id,
-  runId: run.data.run_id,
-})) {
-  // The SDK lifts the wire event type to event.event; payload is event.data.data.
-  if (event.event === EAKEventTypes.RUN_SCREENSHOT) {
-    // The screenshot arrives inline as a data URI:
-    //   event.data.data.screenshot_url = "data:image/jpeg;base64,<payload>"
-    // Strip the prefix and decode the base64 payload to get the image bytes.
-    const url = event.data?.data?.screenshot_url;
-    const base64 = typeof url === "string" ? /^data:[^;,]*;base64,(.*)$/s.exec(url)?.[1] : undefined;
-    if (base64) fs.writeFileSync(`step-${++step}.jpg`, Buffer.from(base64, "base64"));
-  }
-
-  if (event.event === EAKEventTypes.RUN_INPUT_REQUEST) {
-    await handleLoginOrConfirm(event.data); // open data.data.live_url for the user
-  }
-
-  if (event.event === EAKEventTypes.RUN_COMPLETED) break;
-}
+const result = await run.wait({
+  onScreenshot: (img, i) => fs.writeFileSync(`step-${i}.jpg`, img.bytes),
+  onInputRequest: (req) => openForUser(req.liveUrl), // login / confirm handoff
+});
+console.log(result.output);
 ```
 
-For the common case, skip the manual event loop and use `runAndWait`, which drives the run to a terminal state and returns a settled outcome:
+`run()` returns a `RunHandle`. Core events (status, actions, input requests, completion) are always streamed; `capture: { screenshots: true }` opts into per-step screenshots, decoded to bytes for you. `wait()` drives the run to its terminal state and settles the result from the canonical run envelope (`result.raw` carries costs, step counts, and token usage).
+
+For step-by-step control, consume the semantic event stream directly:
 
 ```ts
-const result = await eak.doAnything.runAndWait({
+for await (const event of run.events()) {
+  // event.type: "status" | "action" | "screenshot" | "inputRequest"
+  //           | "message" | "cost" | "progress" | "completed" | "failed"
+  // event.runId / event.at / event.isTerminal / event.data (flat camelCase)
+  // event.raw — the original wire event, if you need it
+  if (event.type === "inputRequest") {
+    await openForUser(event.data.liveUrl);
+    await run.respond(String(event.data.requestId), "done — continue");
+    // run.respond(requestId) with no response skips the request instead
+  }
+}
+// The iterator ends automatically at the terminal event.
+
+await run.cancel("user stopped the task"); // idempotent — safe on a finished run
+const followUp = await eak.doAnything.run({
   token,
-  instruction: "Open the customer website and summarize recent product updates.",
-  timeoutMs: 180_000,
-  onInputRequest: (payload) => openBrowserForUser(payload.live_url), // login / confirm handoff
-  onCostUpdate: (payload) => trackSpend(payload),                    // live running cost
+  instruction: "Now check the pricing page too.",
+  session: run.sessionRef, // reuse the same browser session
 });
-// result.status: "succeeded" | "failed" | "canceled" | "timed_out"; result.output: final payload
-// result.raw: the getRun envelope — total_cost_usd / step_count / token counts live here
+const reattached = await eak.doAnything.attach(run.id, { token, session: run.sessionRef });
 ```
 
 ## Authorization Model
@@ -272,7 +246,19 @@ await eak.gumem.recall({
 
 ## Choosing Scopes
 
-Use explicit scope strings so the requested permission boundary is visible in code.
+For the WebAgent products, the simplest authorization is the `products` sugar — each product name expands to its full scope set:
+
+```ts
+await eak.delegateToken({
+  user: { subject: userId },
+  products: ["doAnything", "webSearch", "deepResearch", "track"],
+  scopes: ["gumem.memory:read"], // fine-grained scopes can be mixed in
+});
+```
+
+Scope strings are validated locally before any request: a scope missing its service prefix (e.g. `do_anything:run` instead of `webagent.do_anything:run`) throws `EAKValidationError` immediately with the correct form in the message.
+
+Use explicit scope strings when the requested permission boundary should be visible in code.
 
 | Scenario | Useful scopes | User-facing meaning |
 | --- | --- | --- |
@@ -341,48 +327,66 @@ const context = await eak.gumem.recall({
 const run = await eak.doAnything.run({
   token,
   instruction: "Open the user's selected product page and summarize updates relevant to their current task.",
-  context: { memory: context.data },
 });
 
-await eak.doAnything.cancel({
-  token,
-  sessionId: run.data.session_id,
-  runId: run.data.run_id,
-  reason: "User stopped the task",
-});
+const status = await run.status(); // refresh the run's current state
+await run.cancel("User stopped the task"); // idempotent
 ```
 
 ### Web Search
 
 ```ts
-const search = await eak.webSearch.run<{ id: string }>({
+const search = await eak.webSearch.run({
   token,
   query: "product update notes relevant to the user's current task",
   maxResultsPerQuery: 5,
 });
 
-for await (const event of eak.webSearch.events({
+const result = await search.wait();
+console.log(result.output); // search results
+```
+
+### Deep Research
+
+```ts
+const research = await eak.deepResearch.run({
   token,
-  runId: search.data.id,
-})) {
-  console.log(event.event, event.data);
+  topic: "State of EU battery recycling, 2026 update",
+  requireOutlineApproval: false,
+  limits: { maxCostUsd: "5.00", maxDurationMinutes: 120 },
+});
+
+const report = await research.wait();
+for (const artifact of report.artifacts) {
+  fs.writeFileSync(artifact.name ?? artifact.id, await artifact.content());
 }
+
+// Follow-up research that inherits the prior run's context:
+const followUp = await eak.deepResearch.run({
+  token,
+  topic: "Now compare against the 2025 numbers.",
+  session: research.sessionRef,
+});
 ```
 
 ### Track
 
 ```ts
-const monitor = await eak.track.createMonitor<{ id: string }>({
+const monitor = await eak.track.create({
   token,
   name: "Pricing page monitor",
   target: "https://example.com/pricing",
   schedule: "0 9 * * 1",
 });
 
-await eak.track.runNow({
-  token,
-  monitorId: monitor.data.id,
-});
+await monitor.runNow();
+const ticks = await monitor.runs({ limit: 10 }); // read-only tick run views
+await monitor.respond("req_1", "logged back in"); // unlock a HITL park
+await monitor.update({ schedule: "0 9 * * *" });
+await monitor.delete();
+
+// Reconnect later from a stored id:
+const sameMonitor = await eak.track.attach(monitor.id, { token });
 ```
 
 ### GenAuth User Context and Management
@@ -443,10 +447,28 @@ import { EAK, EazoAgentKit } from "@eazo/eak";
 | Delegation | `delegateToken`, `completeDelegateToken`, deprecated aliases `delegateAgent`, `completeDelegateAgent` |
 | GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken`, `users.list`, `users.get`, `users.getBatch`, `users.create`, `users.createBatch`, `users.update`, `users.deleteBatch` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
-| Do Anything | `run`, `runAndWait`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
-| Deep Research | `run`, `get`, `events`, `followUp`, `intervene`, `cancel`, `feedback`, `listArtifacts`, `getArtifact` |
-| Web Search | `run`, `get`, `events`, `cancel` |
-| Track | `createMonitor`, `getMonitor`, `updateMonitor`, `deleteMonitor`, `runNow`, `events` |
+| Do Anything | `run`, `attach` → `RunHandle` |
+| Deep Research | `run`, `attach` → `RunHandle` |
+| Web Search | `run`, `attach` → `RunHandle` |
+| Track | `create`, `attach` → `MonitorHandle` |
+
+The three run products share one handle shape:
+
+```ts
+run.id
+run.sessionRef                          // pass back to run({ session }) to reuse the session
+await run.status()                      // refresh and return the current state
+run.events(opts?)                       // AsyncIterable<RunEvent>, ends at the terminal event
+await run.wait({ timeoutMs?, onEvent?, onInputRequest?, onScreenshot? })
+await run.respond(requestId, response?) // HITL answer; omit response to skip
+await run.cancel(reason?)               // idempotent
+```
+
+`MonitorHandle` (Track) exposes `id`, `get()`, `update()`, `runNow()`, `events()`, `respond()`, `runs()`, `run(runId)`, and `delete()`.
+
+### Wire-Level Escape Hatch
+
+The 1:1 low-level methods live under `eak.<product>.api.*` (e.g. `eak.doAnything.api.createSession`, `eak.deepResearch.api.followUp`, `eak.track.api.createMonitor`), together with `EAKEventTypes` and `event.raw` on semantic events. These mirror the backend HTTP contract directly — snake_case fields, double-envelope events, session+run double addressing — and their shapes may evolve with the API. They are not part of the frozen public contract.
 
 Browser Use and Site Login scopes are reserved until their product runtime SDK methods are exported.
 
@@ -466,7 +488,25 @@ type EAKResponse<T> = {
 };
 ```
 
-Streaming methods return `AsyncIterable<EAKEvent<T>>`.
+Handle event streams (`run.events()`, `monitor.events()`) yield semantic `RunEvent` objects:
+
+```ts
+type RunEvent = {
+  type:
+    | "status" | "action" | "screenshot" | "inputRequest"
+    | "message" | "cost" | "progress" | "completed" | "failed";
+  runId: string;
+  at: string;          // ISO 8601
+  isTerminal: boolean; // true for completed / failed
+  data: JsonObject;    // flat, camelCase, narrowed by type
+  image?: { bytes: Uint8Array; mime: string; pageUrl?: string; step?: number }; // screenshot events
+  raw: EAKEvent;       // original wire event (escape hatch)
+};
+```
+
+Dropped connections reconnect automatically with `Last-Event-ID` catch-up; the iterator ends at the run's terminal event.
+
+Wire-level streaming methods (`eak.<product>.api.events`) return `AsyncIterable<EAKEvent<T>>`:
 
 ```ts
 type EAKEvent<T = unknown> = {

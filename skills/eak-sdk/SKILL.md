@@ -5,19 +5,20 @@ description: Use when building, testing, debugging, or documenting Node.js integ
 
 # EAK SDK
 
-> **Requires `@eazo/eak` ≥ 0.2.0.** This guide documents 0.2.0 behavior
-> (snake_case `run_id`/`session_id`, real `run.*` event constants on
-> `event.event`, SSE auto-reconnect, `runAndWait`). If the consumer resolves an
-> older version from npm, install this repo's local build instead
-> (`npm install <path-to-eak-sdk-node>` or a `pnpm pack` tarball) until ≥ 0.2.0
-> is published — otherwise the code below will not match the installed SDK.
+> **Requires `@eazo/eak` ≥ 0.3.0.** This guide documents the semantic-layer
+> surface: `run()`/`create()` return handles (`RunHandle` / `MonitorHandle`),
+> events are normalized (`event.type`, camelCase `data`, decoded screenshots),
+> and the 1:1 wire methods live under `eak.<product>.api.*`. If the consumer
+> resolves an older version from npm, install this repo's local build instead
+> (`npm install <path-to-eak-sdk-node>` or a `pnpm pack` tarball) — otherwise
+> the code below will not match the installed SDK.
 
 ## Core Contract
 
 Use `@eazo/eak` from trusted server-side Node.js code. Keep AK/SK on the server and create one reusable `EazoAgentKit`. For silent runtime product calls, resolve a real GenAuth user id from the credential-bound userpool, call `delegateToken`, then pass `delegation.data.token` explicitly to every product capability call. For interactive runtime authorization, call `delegateToken({ mode: "interactive", redirectUri, state, agent, scopes })` from the server without exposing AK/SK; redirect the user to `authorizationUrl`, then handle the business callback server-side with `completeDelegateToken({ grantId, code, state })` to receive the token. For GenAuth user management, call `eak.genauth.users.*`; the SDK exchanges AK/SK for a standard GenAuth management token internally and does not require `EAK_USER_ID`.
 
 ```ts
-import { EazoAgentKit, EAKEventTypes, EAKScopeBundles, EAKScopes } from "@eazo/eak";
+import { EazoAgentKit, EAKScopes } from "@eazo/eak";
 
 const eak = new EazoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
@@ -29,14 +30,13 @@ const user = await eak.currentUser<{ id: string; subject?: string; name?: string
   accessToken: genauthAccessToken,
 });
 
+// `products` expands to each product's scope set; `agent` defaults to "sdk".
+// Scope strings are pre-validated locally — a missing service prefix throws
+// EAKValidationError with the correct form before any request is sent.
 const delegation = await eak.delegateToken({
   user: user.data,
-  agent: "research-assistant",
-  scopes: [
-    EAKScopes.GUMEM_MEMORY_READ,
-    EAKScopes.GUMEM_MEMORY_WRITE,
-    ...EAKScopeBundles.AGENT_DO_ANYTHING_BASIC,
-  ],
+  products: ["doAnything"],
+  scopes: [EAKScopes.GUMEM_MEMORY_READ, EAKScopes.GUMEM_MEMORY_WRITE],
   mode: "silent",
 });
 
@@ -58,11 +58,17 @@ const memory = await eak.gumem.recall({
   query: "What should the assistant remember?",
 });
 
+// run() returns a RunHandle; the token is held by the handle from here on.
 const run = await eak.doAnything.run({
   token,
   instruction: "Open the target site and summarize product changes.",
-  context: { memory: memory.data },
+  capture: { screenshots: true },
 });
+const result = await run.wait({
+  onScreenshot: (img, i) => saveImage(`step-${i}.jpg`, img.bytes),
+  onInputRequest: (req) => openForUser(req.liveUrl),
+});
+console.log(result.output);
 ```
 
 For explicit authorization, the EAK Console/BFF owns GenAuth login and grant completion before it redirects back to the business `redirectUri`. The redirect only carries one-time callback fields such as `code`, `state`, and `grant_state`/`grantId`; never design an API that exposes a delegation token to browser code.
@@ -119,113 +125,94 @@ await eak.genauth.users.create({
 Use `delegateToken` output for runtime capability namespaces:
 
 - `gumem.createSession`, `gumem.addMessages`, `gumem.recall`, `gumem.uploadResource`, `gumem.actions.*`
-- `webSearch.run/get/events/cancel`
-- `doAnything.run/createSession/createRun/getRun/events/intervene/cancel/readArtifacts/readRecording`
-- `deepResearch.run/get/events/followUp/intervene/cancel/feedback/listArtifacts/getArtifact`
-- `track.createMonitor/getMonitor/updateMonitor/deleteMonitor/runNow/events`
+- `webSearch.run/attach` → `RunHandle`
+- `doAnything.run/attach` → `RunHandle`
+- `deepResearch.run/attach` → `RunHandle`
+- `track.create/attach` → `MonitorHandle`
+- Wire-level escape hatch: `eak.<product>.api.*` (1:1 backend HTTP methods; shapes may evolve with the API)
 
-## Do Anything: runAndWait (high-level)
+## Run Handles (doAnything / webSearch / deepResearch)
 
-For the common "run a task and get the result" case, prefer `doAnything.runAndWait`
-over wiring `run` + `events` + terminal detection yourself. It starts the run,
-drives the stream to a terminal state, and resolves a settled outcome; it falls
-back to `getRun` if the stream closes without a terminal event.
-
-```ts
-const result = await eak.doAnything.runAndWait({
-  token,
-  instruction: "Open https://example.com and summarize the page, then finish.",
-  timeoutMs: 180_000,                                   // client cap; status "timed_out" on elapse
-  onAction: (p) => console.log("action:", p),           // run.action.started payloads
-  onInputRequest: (p) => openBrowserForUser(p.live_url),// login / confirm — surface the live browser
-  onCostUpdate: (p) => budgetGuard(p),                  // live running cost (run.cost_update)
-});
-// result: { runId, sessionId, status: "succeeded"|"failed"|"canceled"|"timed_out",
-//           terminalReason?, isTaskSuccessful?, output?, raw? }
-// result.raw is the full getRun envelope — total_cost_usd, step_count, tokens, … live there
-// (the run.completed event payload is leaner and omits them).
-```
-
-`runAndWait` filters to the top-level run (sub-run events don't fire your hooks) and settles from the `getRun` envelope, so `result.raw` always carries cost / step / token fields. Use `run` + `events` (below) only when you need fine-grained control of the stream.
-
-## Do Anything Runtime Shapes
-
-`doAnything.run({ token, instruction, stream?, context? })` creates a session and a run in one call and returns `EAKResponse<DoAnythingRunResult>`. The canonical run naming (shared with Deep Research and Web Search) is snake_case:
-
-- run id: `data.run_id`
-- session id: `data.session_id`
-
-Pass both to `events`/`getRun`/`intervene`/`cancel` to address the run. Other envelope fields (status, output, costs, …) ride along under the result's index signature. Pass `stream.events: EAKEventType[]` to tell the backend which events to emit.
-
-Stream with `doAnything.events({ token, sessionId, runId, signal?, lastEventId?, onlyTopLevel? })` — an `AsyncIterable<EAKEvent>` where each event is `{ id?, event, data }`. The backend frames carry the type in the envelope's `type` field (no SSE `event:` line); the SDK lifts it to **`event.event`**, so match `event.event` against `EAKEventTypes`. The envelope rides in `event.data`: the payload is `event.data.data`, and `event.data.task_id` / `event.data.session_id` identify the run. Pass `onlyTopLevel: true` (with `runId`) to drop internal sub-run events and keep just your run's. The stream auto-reconnects on drops (network / 5xx / expired-token 401, resuming from the last event id); tune with `sseMaxRetries`.
-
-> `EAKEventTypes` are the real wire names (`run.*`), aligned with the backend `EventType` enum. The `stream.events` array on `run()` does NOT filter the stream — `events()` delivers every `run.*` event; filter client-side on `event.event`.
-
-Key `event.event` values (`EAKEventTypes`):
-
-- `RUN_STATUS_CHANGED` (`run.status_changed`) — the NEW status is `event.data.data.to` (NOT `.status`); `.from` is the previous status. The first event is the synthetic `from=null, to="pending"` (task born), so reading `.status` yields `undefined`.
-- `RUN_MESSAGE` (`run.message`) — an agent/user message.
-- `RUN_ACTION_STARTED` / `RUN_ACTION_COMPLETED` / `RUN_ACTION_FAILED` — one agent action.
-- `RUN_SCREENSHOT` (`run.screenshot`) — per-step still; `event.data.data.screenshot_url` is an inline `data:` URI (large; for production prefer pulling stills/recording afterward via `readArtifacts` / `readRecording` rather than retaining every inline frame).
-- `RUN_BROWSER_AGENT_VISION_DECISION` — per-step vision reasoning (high volume).
-- `RUN_INPUT_REQUEST` (`run.input_request`) — a human is needed (login / confirm); see the Login Wall section.
-- `RUN_BROWSER_LIVE_URL_CHANGED` — interactive live-browser URL changed (`event.data.data.live_url`).
-- `RUN_COST_UPDATE` (`run.cost_update`) — running cost; subscribe for a live budget guard.
-- `RUN_SUBTASK_STARTED` / `RUN_SUBTASK_GRADED` — sub-run lifecycle (one `run()` spawns internal sub-tasks).
-- `RUN_COMPLETED` (`run.completed`) — **TERMINAL**. Stop iterating. Outcome is in the payload: `event.data.data.terminal_reason` / `is_task_successful` / `output`.
-
-Terminal detection: break when `event.event === EAKEventTypes.RUN_COMPLETED`. Read the final answer from `event.data.data.output` (shape is task-specific). The `run.completed` payload is lean — **`total_cost_usd` / `step_count` / token counts are NOT in it**; call `getRun` (or use `runAndWait`, whose `result.raw` is the `getRun` envelope) for those. Bound wall-clock with `signal: AbortSignal.timeout(ms)`; a timeout/abort does NOT mean the run failed — the backend task may still be running.
-
-Sub-tasks: a single `run()` can emit events for internal sub-runs under different ids. To keep only your top-level run, compare `event.data.task_id` against your `run_id`.
-
-Reconnect: `events()` auto-reconnects a dropped stream (network / 5xx), resuming from the last event id; tune with the `sseMaxRetries` client option (default 5, `0` disables). User aborts (via `signal`) and terminal 4xx are never retried.
+`run(input)` returns a `RunHandle` — the same shape for all three products. The token is passed once at the entry call; handle methods never take a token or ids.
 
 ```ts
 const run = await eak.doAnything.run({
   token,
   instruction: "Open https://example.com and summarize the page, then finish.",
+  capture: { screenshots: true },          // opt-in media; core events are always on
+  limits: { maxDurationMinutes: 10 },
+  // session: prior.sessionRef,            // reuse a session / DR follow-up run
 });
-const { run_id, session_id } = run.data;
 
-for await (const event of eak.doAnything.events({
-  token,
-  sessionId: session_id,
-  runId: run_id,
-  signal: AbortSignal.timeout(180_000),
-})) {
-  const payload = (event.data as { data?: Record<string, unknown> }).data ?? {};
-  if (event.event === EAKEventTypes.RUN_COMPLETED) {
-    console.log("done:", payload.terminal_reason, payload.output);
-    break;
+run.id;
+run.sessionRef;                            // pass back to run({ session })
+await run.status();                        // refresh current state
+await run.respond(requestId, response?);   // HITL answer; omit response to skip
+await run.cancel(reason?);                 // idempotent — safe on a finished run
+
+const result = await run.wait({
+  timeoutMs: 180_000,                      // throws EAKTimeoutError on elapse; run keeps going server-side
+  onEvent: (e) => console.log(e.type),
+  onInputRequest: (req) => openForUser(req.liveUrl),
+  onScreenshot: (img, i) => saveImage(`step-${i}.jpg`, img.bytes),
+});
+// result: { runId, status: "succeeded"|"failed"|"canceled", output?, artifacts,
+//           terminalReason?, isTaskSuccessful?, raw }
+// result.raw is the full run-detail envelope — total_cost_usd, step_count, tokens.
+// result.artifacts: deepResearch deliverables (id/name/mime, content() fetches bytes lazily);
+// empty array for the other products.
+
+const sameRun = await eak.doAnything.attach(run.id, { token, session: run.sessionRef });
+// webSearch / deepResearch attach without session: eak.deepResearch.attach(runId, { token })
+```
+
+### Semantic events
+
+`run.events()` is an `AsyncIterable<RunEvent>` that ends automatically at the terminal event and reconnects dropped streams internally (`Last-Event-ID` catch-up; tune with `sseMaxRetries`, default 5).
+
+```ts
+for await (const event of run.events()) {
+  event.type;       // "status" | "action" | "screenshot" | "inputRequest"
+                    //  | "message" | "cost" | "progress" | "completed" | "failed"
+  event.runId;
+  event.at;         // ISO 8601
+  event.isTerminal; // completed / failed
+  event.data;       // flat camelCase payload, narrowed by type
+  event.raw;        // original wire event (escape hatch)
+  if (event.type === "screenshot") {
+    event.image;    // { bytes: Uint8Array; mime; pageUrl?; step? } — data URI already decoded
   }
 }
 ```
 
+- Unmapped wire event types surface as `progress` (nothing is silently dropped); the wire shape stays on `event.raw`.
+- Terminal events of internal sub-runs are demoted to `progress`, so they never end your iterator; only YOUR run's terminal ends it.
+- `capture: { screenshots, videoFrames }` controls media events. Without `capture.screenshots`, screenshot events are neither subscribed nor delivered.
+- The terminal event payload is lean — `wait()` settles from the run-detail envelope, so prefer `result.raw` for `total_cost_usd` / `step_count` / token counts.
+
+### Wire-level stream (escape hatch)
+
+`eak.doAnything.api.events({ token, sessionId, runId, signal?, lastEventId?, onlyTopLevel? })` yields raw `{ id?, event, data }` wire events: the type is lifted to `event.event` (match against `EAKEventTypes`), the payload is `event.data.data` (snake_case), and `event.data.task_id` identifies the run. `RUN_STATUS_CHANGED` payloads carry the new status in `.to` (NOT `.status`). Terminal detection is `event.event === EAKEventTypes.RUN_COMPLETED`. Wire shapes may evolve with the API.
+
 ## Do Anything Login Wall (human handoff)
 
-A web task often hits a page only the end user can log in to. The agent parks and emits **`RUN_INPUT_REQUEST`** (`run.input_request`). The interactive live-browser URL arrives on **`RUN_BROWSER_LIVE_URL_CHANGED`** (`event.data.data.live_url`); `getRun` / the session-detail GET also carries the current `live_url` as a fallback. The client's ONLY job is to surface that URL so the human can sign in — login detection is the BACKEND's job; it re-probes and resumes the run automatically.
+A web task often hits a page only the end user can log in to. The agent parks and emits an **`inputRequest`** event. The live-browser URL arrives on the request payload (`event.data.liveUrl`; live-url changes also stream as `progress` events with `data.liveUrl`). The client's ONLY job is to surface that URL so the human can sign in — login detection is the BACKEND's job; it re-probes and resumes the run automatically.
 
-- Capture `live_url` from `RUN_BROWSER_LIVE_URL_CHANGED`; open it ONCE in a real browser when you see `RUN_INPUT_REQUEST`. Do NOT poll, do NOT call `intervene`, do NOT wait on the window closing.
-- Keep iterating; the run progresses past the wall and reaches `RUN_COMPLETED` on its own once the user is signed in.
+- Open `liveUrl` ONCE in a real browser when you see `inputRequest`. Do NOT poll, do NOT call `respond`, do NOT wait on the window closing.
+- Keep iterating (or stay inside `wait()`); the run progresses past the wall and reaches its terminal event on its own once the user is signed in.
 - The first login is unavoidable; later runs reuse persisted login state and never reach this wall.
 
 ```ts
-let liveUrl = "";
-for await (const event of eak.doAnything.events({ token, sessionId, runId })) {
-  const payload = (event.data as { data?: Record<string, unknown> }).data ?? {};
-  if (event.event === EAKEventTypes.RUN_BROWSER_LIVE_URL_CHANGED && payload.live_url) {
-    liveUrl = String(payload.live_url);
-  }
-  if (event.event === EAKEventTypes.RUN_INPUT_REQUEST && liveUrl) {
-    openBrowserForUser(liveUrl); // pop once; the backend resumes by itself
-  }
-  if (event.event === EAKEventTypes.RUN_COMPLETED) break;
-}
+const result = await run.wait({
+  onInputRequest: (req) => {
+    if (req.liveUrl) openBrowserForUser(String(req.liveUrl)); // pop once; the backend resumes by itself
+  },
+});
 ```
 
 ## Run Lifecycle & State Machine
 
-A run's `status` (on `run.status_changed` events and `getRun`) moves through:
+A run's `status` (on `status` events and `run.status()`) moves through:
 
 ```
 pending → running → (running ⇄ awaiting_input)* → succeeded | failed | canceled
@@ -240,22 +227,22 @@ pending → running → (running ⇄ awaiting_input)* → succeeded | failed | c
   `terminal_reason` / `is_task_successful`).
 
 **Client action is event-driven, not status-driven.** The only thing that needs
-you is `run.input_request` (surface `live_url` so a human can log in / confirm —
-see Login Wall). Everything else, including login walls, the backend re-probes
-and resumes on its own. A run flapping `running ⇄ awaiting_input` (e.g.
-`waiting_reason=confirmation_required` during internal pacing) is expected — do
-NOT poll or call `intervene`. Only call `intervene` for a run you deliberately
-paused (`user_paused` via take-control).
+you is the `inputRequest` event (surface `liveUrl` so a human can log in /
+confirm — see Login Wall). Everything else, including login walls, the backend
+re-probes and resumes on its own. A run flapping `running ⇄ awaiting_input`
+(e.g. `waiting_reason=confirmation_required` during internal pacing) is
+expected — do NOT poll or call `respond`. Only call `respond` to answer an
+actual `inputRequest`.
 
 ### Parent & sub-tasks
 
-One `run()` can spawn internal sub-runs (planning / grading), so the stream may
-carry events for more than one id plus `run.subtask_started` / `run.subtask_graded`.
-Each event's run id is `event.data.task_id`; your top-level run is the `run_id`
-from `run()`. To keep only your run's events, filter
-`event.data.task_id === run_id`. A run envelope's `parent_run_id` / `depth`
-identify where it sits in the hierarchy. (`runAndWait` already settles on your
-top-level run's `run.completed`.)
+One `run()` can spawn internal sub-runs (planning / grading). The semantic
+stream demotes sub-run terminals to `progress` and reports each event's owner
+on `event.runId`, so your iterator only ends on YOUR run's terminal. On the
+wire-level stream (`api.events`), each event's run id is `event.data.task_id`;
+filter `event.data.task_id === run_id` (or pass `onlyTopLevel: true`) to keep
+only your run's events. A run envelope's `parent_run_id` / `depth` identify
+where it sits in the hierarchy.
 
 ## Local GenAuth And Docker
 

@@ -66,7 +66,8 @@ npm 包中包含 `skills/` 目录，但推荐仍使用上面的 GitHub 仓库安
 先在可信服务端初始化 SDK。AK/SK 只留在服务端，管理面调用和运行时产品委托都复用这一个 SDK 实例。
 
 ```ts
-import { EazoAgentKit, EAKEventTypes, EAKScopeBundles, EAKScopes } from "@eazo/eak";
+import fs from "node:fs";
+import { EazoAgentKit } from "@eazo/eak";
 
 const eak = new EazoAgentKit({
   accessKey: process.env.EAK_ACCESS_KEY!,
@@ -114,77 +115,52 @@ if (!userId) {
   throw new Error("EAK_USER_ID 必须是 credential 绑定 userpool 下的真实 GenAuth 用户 ID");
 }
 
-const delegation = await eak.delegateToken({
-  userId,
-  agent: "sales-assistant",
-  scopes: [
-    ...EAKScopeBundles.GUMEM_SESSION_RECALL,
-    EAKScopes.WEB_SEARCH_RUN,
-    EAKScopes.WEB_SEARCH_READ,
-    EAKScopes.DO_ANYTHING_RUN,
-    EAKScopes.DO_ANYTHING_READ,
-  ],
-  mode: "silent",
-});
-
-const token = delegation.data.token;
-
-const memory = await eak.gumem.recall({
-  token,
-  sessionId: "customer-brief",
-  query: "执行客户调研前需要记住哪些用户偏好？",
-});
+// `products` 是按产品授权的糖；`agent` 可以不传，默认 "sdk"。
+const { token } = (
+  await eak.delegateToken({
+    user: { subject: userId },
+    products: ["doAnything"],
+  })
+).data;
 
 const run = await eak.doAnything.run({
-  token,
+  token, // 入口传一次，句柄随后持有——句柄方法不再传 token
   instruction: "打开客户官网并总结最近的产品变化。",
-  context: { memory: memory.data },
-  // 截图、输入请求这类可选事件必须在建 run 时通过 stream.events 订阅，
-  // 不订阅后端不会推送。
-  stream: {
-    events: [
-      EAKEventTypes.RUN_SCREENSHOT,
-      EAKEventTypes.RUN_INPUT_REQUEST,
-      EAKEventTypes.RUN_COMPLETED,
-    ],
-  },
+  capture: { screenshots: true },
 });
 
-// run.data 是 run envelope:{ run_id, session_id, ... }。
-let step = 0; // import fs from "node:fs";
-for await (const event of eak.doAnything.events({
-  token,
-  sessionId: run.data.session_id,
-  runId: run.data.run_id,
-})) {
-  // SDK 把 wire 事件类型提升到 event.event;payload 在 event.data.data。
-  if (event.event === EAKEventTypes.RUN_SCREENSHOT) {
-    // 截图以 data URI 内联送达:
-    //   event.data.data.screenshot_url = "data:image/jpeg;base64,<payload>"
-    // 去掉前缀、解码 base64 即得到图片字节。
-    const url = event.data?.data?.screenshot_url;
-    const base64 = typeof url === "string" ? /^data:[^;,]*;base64,(.*)$/s.exec(url)?.[1] : undefined;
-    if (base64) fs.writeFileSync(`step-${++step}.jpg`, Buffer.from(base64, "base64"));
-  }
-
-  if (event.event === EAKEventTypes.RUN_INPUT_REQUEST) {
-    await handleLoginOrConfirm(event.data); // 为用户打开 data.data.live_url
-  }
-
-  if (event.event === EAKEventTypes.RUN_COMPLETED) break;
-}
+const result = await run.wait({
+  onScreenshot: (img, i) => fs.writeFileSync(`step-${i}.jpg`, img.bytes),
+  onInputRequest: (req) => openForUser(req.liveUrl), // 登录 / 确认交接
+});
+console.log(result.output);
 ```
 
-常见场景可以跳过手写事件循环，直接用 `runAndWait`——它会把任务跑到终态并返回结果：
+`run()` 返回一个 `RunHandle`。核心事件（状态、动作、输入请求、完成）始终默认推送；`capture: { screenshots: true }` 开启逐步截图，并且 SDK 已经把图片解码成字节。`wait()` 把任务跑到终态，并从权威 run envelope 结算结果（成本、步数、token 用量都在 `result.raw` 上）。
+
+需要逐步控制时，直接消费语义事件流：
 
 ```ts
-const result = await eak.doAnything.runAndWait({
+for await (const event of run.events()) {
+  // event.type: "status" | "action" | "screenshot" | "inputRequest"
+  //           | "message" | "cost" | "progress" | "completed" | "failed"
+  // event.runId / event.at / event.isTerminal / event.data（平坦 camelCase）
+  // event.raw —— 原始 wire 事件（逃生舱）
+  if (event.type === "inputRequest") {
+    await openForUser(event.data.liveUrl);
+    await run.respond(String(event.data.requestId), "已处理，请继续");
+    // run.respond(requestId) 不传 response 即跳过该请求
+  }
+}
+// 迭代器在终态事件后自动结束。
+
+await run.cancel("用户停止任务"); // 幂等——对已结束的 run 调用也不会抛错
+const followUp = await eak.doAnything.run({
   token,
-  instruction: "打开客户官网并总结最近的产品变化。",
-  timeoutMs: 180_000,
-  onInputRequest: (payload) => openBrowserForUser(payload.live_url), // 登录 / 确认交接
+  instruction: "再看一眼定价页。",
+  session: run.sessionRef, // 复用同一个浏览器会话
 });
-// result.status: "succeeded" | "failed" | "canceled" | "timed_out";result.output: 终态产物
+const reattached = await eak.doAnything.attach(run.id, { token, session: run.sessionRef });
 ```
 
 这里的关键点不是方法有多少，而是每一步都有边界：Agent 只能做 token 里 scope 允许的事情，授权过期后不能继续执行，后端可以通过 `auditId` 追溯这次行为。
@@ -267,7 +243,19 @@ await eak.gumem.recall({
 
 ## Scope 怎么选
 
-直接使用 scope 字符串，让业务代码里能看见本次 Agent 请求的最小授权边界。
+WebAgent 产品最简单的授权方式是 `products` 糖——每个产品名展开为该产品的完整 scope 集合：
+
+```ts
+await eak.delegateToken({
+  user: { subject: userId },
+  products: ["doAnything", "webSearch", "deepResearch", "track"],
+  scopes: ["gumem.memory:read"], // 可以和细粒度 scope 并用
+});
+```
+
+scope 字符串在发请求前就会本地预检：漏掉服务前缀（比如写成 `do_anything:run` 而不是 `webagent.do_anything:run`）会立即抛出 `EAKValidationError`，错误消息里带正确写法。
+
+需要让授权边界直接出现在业务代码里时，使用显式 scope 字符串。
 
 | 场景 | 推荐 scope | 用户能理解的描述 |
 | --- | --- | --- |
@@ -336,48 +324,66 @@ const context = await eak.gumem.recall({
 const run = await eak.doAnything.run({
   token,
   instruction: "打开用户选择的产品页面，总结和当前任务相关的更新。",
-  context: { memory: context.data },
 });
 
-await eak.doAnything.cancel({
-  token,
-  sessionId: run.data.session_id,
-  runId: run.data.run_id,
-  reason: "用户停止任务",
-});
+const status = await run.status(); // 刷新并返回当前状态
+await run.cancel("用户停止任务"); // 幂等
 ```
 
 ### Web Search
 
 ```ts
-const search = await eak.webSearch.run<{ id: string }>({
+const search = await eak.webSearch.run({
   token,
   query: "和用户当前任务相关的产品更新说明",
   maxResultsPerQuery: 5,
 });
 
-for await (const event of eak.webSearch.events({
+const result = await search.wait();
+console.log(result.output); // 搜索结果
+```
+
+### Deep Research
+
+```ts
+const research = await eak.deepResearch.run({
   token,
-  runId: search.data.id,
-})) {
-  console.log(event.event, event.data);
+  topic: "欧盟电池回收行业 2026 年现状",
+  requireOutlineApproval: false,
+  limits: { maxCostUsd: "5.00", maxDurationMinutes: 120 },
+});
+
+const report = await research.wait();
+for (const artifact of report.artifacts) {
+  fs.writeFileSync(artifact.name ?? artifact.id, await artifact.content());
 }
+
+// 追问：起一个继承前序上下文的新 run。
+const followUp = await eak.deepResearch.run({
+  token,
+  topic: "再对比一下 2025 年的数据。",
+  session: research.sessionRef,
+});
 ```
 
 ### Track
 
 ```ts
-const monitor = await eak.track.createMonitor<{ id: string }>({
+const monitor = await eak.track.create({
   token,
   name: "竞品价格页监控",
   target: "https://example.com/pricing",
   schedule: "0 9 * * 1",
 });
 
-await eak.track.runNow({
-  token,
-  monitorId: monitor.data.id,
-});
+await monitor.runNow();
+const ticks = await monitor.runs({ limit: 10 }); // tick 产生的 run 只读列表
+await monitor.respond("req_1", "已重新登录");     // 解锁等待人工介入的监控
+await monitor.update({ schedule: "0 9 * * *" });
+await monitor.delete();
+
+// 之后可以用存下来的 id 重连：
+const sameMonitor = await eak.track.attach(monitor.id, { token });
 ```
 
 ### GenAuth 用户上下文与用户管理
@@ -438,10 +444,28 @@ import { EAK, EazoAgentKit } from "@eazo/eak";
 | 委托授权 | `delegateToken`, `completeDelegateToken`；兼容别名：`delegateAgent`, `completeDelegateAgent` |
 | GenAuth | `userInfo`, `jwks`, `discovery`, `introspectDelegationToken`, `users.list`, `users.get`, `users.getBatch`, `users.create`, `users.createBatch`, `users.update`, `users.deleteBatch` |
 | GUMem | `createSession`, `addMessages`, `recall`, `uploadResource`, `actions.record`, `actions.recall`, `actions.stream` |
-| Do Anything | `run`, `runAndWait`, `createSession`, `createRun`, `getRun`, `events`, `intervene`, `cancel`, `readArtifacts`, `readRecording` |
-| Deep Research | `run`, `get`, `events`, `followUp`, `intervene`, `cancel`, `feedback`, `listArtifacts`, `getArtifact` |
-| Web Search | `run`, `get`, `events`, `cancel` |
-| Track | `createMonitor`, `getMonitor`, `updateMonitor`, `deleteMonitor`, `runNow`, `events` |
+| Do Anything | `run`, `attach` → `RunHandle` |
+| Deep Research | `run`, `attach` → `RunHandle` |
+| Web Search | `run`, `attach` → `RunHandle` |
+| Track | `create`, `attach` → `MonitorHandle` |
+
+三个任务型产品共用同一个句柄形态：
+
+```ts
+run.id
+run.sessionRef                          // 传回 run({ session }) 复用会话
+await run.status()                      // 刷新并返回当前状态
+run.events(opts?)                       // AsyncIterable<RunEvent>，终态自动结束
+await run.wait({ timeoutMs?, onEvent?, onInputRequest?, onScreenshot? })
+await run.respond(requestId, response?) // HITL 应答；不传 response 即跳过
+await run.cancel(reason?)               // 幂等
+```
+
+`MonitorHandle`（Track）提供 `id`、`get()`、`update()`、`runNow()`、`events()`、`respond()`、`runs()`、`run(runId)`、`delete()`。
+
+### Wire 级逃生舱
+
+与后端 HTTP 契约一一对应的低层方法保留在 `eak.<product>.api.*` 下（如 `eak.doAnything.api.createSession`、`eak.deepResearch.api.followUp`、`eak.track.api.createMonitor`），配套 `EAKEventTypes` 常量和语义事件上的 `event.raw`。这些方法直接镜像 wire 形状——snake_case 字段、双层 envelope 事件、session+run 双 ID 寻址——形状会随 API 演进变化，不在冻结的公开契约范围内。
 
 Browser Use、Site Login 的 scope 已预留，但产品运行时 SDK 方法导出前不作为公开方法说明。
 
@@ -461,7 +485,25 @@ type EAKResponse<T> = {
 };
 ```
 
-流式方法返回 `AsyncIterable<EAKEvent<T>>`：
+句柄事件流（`run.events()`、`monitor.events()`）产出语义化的 `RunEvent`：
+
+```ts
+type RunEvent = {
+  type:
+    | "status" | "action" | "screenshot" | "inputRequest"
+    | "message" | "cost" | "progress" | "completed" | "failed";
+  runId: string;
+  at: string;          // ISO 8601
+  isTerminal: boolean; // completed / failed 为 true
+  data: JsonObject;    // 平坦、camelCase、按 type 收窄
+  image?: { bytes: Uint8Array; mime: string; pageUrl?: string; step?: number }; // screenshot 事件
+  raw: EAKEvent;       // 原始 wire 事件（逃生舱）
+};
+```
+
+断线会带 `Last-Event-ID` 自动重连续传；迭代器在终态事件后自动结束。
+
+Wire 级流式方法（`eak.<product>.api.events`）返回 `AsyncIterable<EAKEvent<T>>`：
 
 ```ts
 type EAKEvent<T = unknown> = {
