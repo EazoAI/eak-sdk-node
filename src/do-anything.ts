@@ -88,9 +88,7 @@ export interface DoAnythingRunOptions {
   session?: SessionRef;
   // Product-specific options stay camelCase.
   profileId?: string;
-  workspaceId?: string;
   keepAlive?: boolean;
-  outputSchema?: JsonObject;
   allowedActions?: string[];
   skills?: string[];
   [key: string]: unknown;
@@ -107,11 +105,20 @@ export interface DoAnythingAttachOptions {
   capture?: CaptureOptions;
 }
 
-// Options the wire create body has no field for — the platform decides these
+// Options the wire create body has no field for — either platform-decided
 // server-side (model via `llm.default_model`, cost ceiling via the internal
-// budget guard, browser egress via dynconfig). Sending them would be a silent
-// drop, so `run()` fails loudly instead (contract §4).
-const PLATFORM_DECIDED_RUN_OPTIONS = ["model", "proxyCountryCode", "callbackUrl"] as const;
+// budget guard, browser egress via dynconfig) or retired phantom knobs the
+// backend never consumed and now 422s (extra="forbid"). Sending them would
+// be a silent drop or a wire error, so `run()` fails loudly up front
+// (contract §4).
+const PLATFORM_DECIDED_RUN_OPTIONS = [
+  "model",
+  "proxyCountryCode",
+  "callbackUrl",
+  "workspaceId",
+  "outputSchema",
+  "cacheScript",
+] as const;
 
 export function createDoAnythingNamespace(transport: EAKTransport) {
   /**
@@ -353,12 +360,9 @@ function normalizeDoAnythingRunInput(input: JsonObject): JsonObject {
     instruction: "instructions",
     sessionId: "session_id",
     profileId: "profile_id",
-    workspaceId: "workspace_id",
     keepAlive: "keep_alive",
     allowedActions: "allowed_actions",
     maxDurationMinutes: "max_duration_minutes",
-    outputSchema: "output_schema",
-    cacheScript: "cache_script",
   });
   return body;
 }

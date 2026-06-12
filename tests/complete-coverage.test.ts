@@ -573,11 +573,9 @@ describe("complete public method coverage matrix", () => {
           token,
           instruction: "open eazo.ai",
           profileId: "profile_matrix",
-          workspaceId: "workspace_matrix",
           keepAlive: true,
           allowedActions: ["navigate"],
           limits: { maxDurationMinutes: 1 },
-          outputSchema: { type: "object" },
         });
         expect(handle.id).toBe("run_matrix");
         expect(handle.sessionRef).toEqual({ sessionId: "sess_matrix" });
@@ -615,11 +613,9 @@ describe("complete public method coverage matrix", () => {
         ).toEqual({
           instructions: "open eazo.ai",
           profile_id: "profile_matrix",
-          workspace_id: "workspace_matrix",
           keep_alive: true,
           allowed_actions: ["navigate"],
           max_duration_minutes: 1,
-          output_schema: { type: "object" },
         });
         expect(h.calls.map((call) => `${call.method} ${call.pathname}`)).toEqual(
           expect.arrayContaining([
