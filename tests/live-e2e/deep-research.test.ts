@@ -24,7 +24,6 @@ const DR_WAIT_TIMEOUT_MS = Number(
 describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
   let client: ReturnType<typeof liveClient>;
   let token: string;
-  let run: RunHandle | undefined;
   let runReady: Promise<RunHandle | undefined> | undefined;
   let resultReady: Promise<RunResult | undefined> | undefined;
   let recordedEvents = 0;
@@ -38,14 +37,14 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
 
   afterAll(async () => {
     // Semantic cancel is idempotent — safe even when the run already settled.
-    await run?.cancel("sdk live e2e cleanup").catch(() => undefined);
+    await runReady?.then((run) => run?.cancel("sdk live e2e cleanup")).catch(() => undefined);
   });
 
   // One run shared across the file: token passed ONCE at the entry call,
-  // every later operation goes through the handle.
+  // every later operation goes through the run.
   function ensureRun() {
     runReady ??= (async () => {
-      const handle = await allowLiveEnvironmentConstraint(
+      const run = await allowLiveEnvironmentConstraint(
         client.deepResearch.run({
           token,
           // Plain researchable topic — no nonce: the topic fans out into real
@@ -68,8 +67,7 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
           domainWhitelist: ["example.com"],
         }),
       );
-      run = handle ?? undefined;
-      return run;
+      return run ?? undefined;
     })();
     return runReady;
   }
@@ -82,12 +80,12 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
   // under .secrets/runs/deep_research-<runId>/ (EAK_OUT_DIR overrides).
   function ensureResult() {
     resultReady ??= (async () => {
-      const handle = await ensureRun();
-      if (!handle) return undefined;
-      const recorder = openRawEventRecorder(`deep_research-${handle.id}`);
+      const run = await ensureRun();
+      if (!run) return undefined;
+      const recorder = openRawEventRecorder(`deep_research-${run.id}`);
       recordedFile = recorder.file;
-      console.log(`recording run ${handle.id} → ${recorder.dir}`);
-      const result = await handle.wait({
+      console.log(`recording run ${run.id} → ${recorder.dir}`);
+      const result = await run.wait({
         timeoutMs: DR_WAIT_TIMEOUT_MS,
         onEvent: (event) => recorder.record(event),
         onInputRequest: async (request) => {
@@ -96,7 +94,7 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
           // a gate it cannot address) — empty means the backend regressed.
           expect(requestId, "input request should carry requestId").toBeTruthy();
           if (approvedRequests.includes(requestId)) return; // replayed event
-          await handle.respond(requestId, "approve");
+          await run.respond(requestId, "approve");
           approvedRequests.push(requestId);
           console.log(`  approved outline gate (request ${requestId})`);
         },
@@ -108,33 +106,33 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
     return resultReady;
   }
 
-  it("deepResearch.run({ token, topic, requireOutlineApproval, limits, ... }) returns a handle", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    expect(handle.id).toBeTruthy();
+  it("deepResearch.run({ token, topic, requireOutlineApproval, limits, ... }) returns a run", async () => {
+    const run = await ensureRun();
+    if (!run) return;
+    expect(run.id).toBeTruthy();
   });
 
   it("run.status() refreshes the run without re-passing token or id", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    const status = await handle.status();
-    expect(status.id).toBe(handle.id);
+    const run = await ensureRun();
+    if (!run) return;
+    const status = await run.status();
+    expect(status.id).toBe(run.id);
     expect(status.status).toBeTruthy();
   });
 
   it("run.events() yields normalized semantic events", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    const events = await collectRunEvents((signal) => handle.events({ signal }), {
+    const run = await ensureRun();
+    if (!run) return;
+    const events = await collectRunEvents((signal) => run.events({ signal }), {
       label: "deepResearch run.events",
     });
-    expect(events.some((event) => event.runId === handle.id)).toBe(true);
+    expect(events.some((event) => event.runId === run.id)).toBe(true);
   });
 
   it("run.respond() without a response fails loudly — the outline gate cannot be skipped", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    await expect(handle.respond("any-request")).rejects.toThrowError(EAKValidationError);
+    const run = await ensureRun();
+    if (!run) return;
+    await expect(run.respond("any-request")).rejects.toThrowError(EAKValidationError);
   });
 
   it(
@@ -154,7 +152,7 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
       expect(reportText.toLowerCase()).toContain("example");
 
       // Deliverables ride on the settled result (contract §4): deepResearch
-      // produces artifacts; content is fetched lazily through the handle.
+      // produces artifacts; content is fetched lazily through the run.
       expect(Array.isArray(result.artifacts)).toBe(true);
       if (result.artifacts.length > 0) {
         const first = result.artifacts[0];
@@ -172,29 +170,29 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
   );
 
   it("run.cancel() is idempotent on a settled run", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
+    const run = await ensureRun();
+    if (!run) return;
     await ensureResult();
     // The contract makes cancel idempotent: cancelling a terminal run returns
     // its terminal state instead of throwing a wire 4xx.
-    const status = await handle.cancel("sdk live e2e cleanup");
+    const status = await run.cancel("sdk live e2e cleanup");
     expect(["succeeded", "failed", "canceled"]).toContain(status.status);
   });
 
   // Escape-hatch smoke: the wire layer (api.*) must keep working for advanced
   // users, but it appears ONLY here — everything above is semantic. Report
   // feedback is an application-level capability that exists only on the wire
-  // (contract §9), so it is exercised here rather than via the handle.
+  // (contract §9), so it is exercised here rather than via the run.
   it("escape hatch: api.get / api.feedback still speak wire", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
+    const run = await ensureRun();
+    if (!run) return;
     await ensureResult();
-    const wire = await client.deepResearch.api.get<JsonObject>({ token, runId: handle.id });
+    const wire = await client.deepResearch.api.get<JsonObject>({ token, runId: run.id });
     expect(wire.data).toBeTruthy();
     expect(typeof wire.data.status).toBe("string");
     await client.deepResearch.api.feedback({
       token,
-      runId: handle.id,
+      runId: run.id,
       rating: 5,
       feedbackText: "SDK live e2e feedback",
     });

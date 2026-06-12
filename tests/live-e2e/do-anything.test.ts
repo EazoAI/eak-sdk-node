@@ -25,7 +25,6 @@ const EXPECTED_TITLE_RE = /universally unique identifier/i;
 describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
   let client: ReturnType<typeof liveClient>;
   let token: string;
-  let run: RunHandle | undefined;
   let runReady: Promise<RunHandle | undefined> | undefined;
   let resultReady: Promise<RunResult | undefined> | undefined;
   let recordedEvents = 0;
@@ -39,14 +38,14 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
 
   afterAll(async () => {
     // Semantic cancel is idempotent — safe even when the run already settled.
-    await run?.cancel("sdk live e2e cleanup").catch(() => undefined);
+    await runReady?.then((run) => run?.cancel("sdk live e2e cleanup")).catch(() => undefined);
   });
 
   // One run shared across the file: token passed ONCE at the entry call,
-  // every later operation goes through the handle.
+  // every later operation goes through the run.
   function ensureRun() {
     runReady ??= (async () => {
-      const handle = await allowLiveEnvironmentConstraint(
+      const run = await allowLiveEnvironmentConstraint(
         client.doAnything.run({
           token,
           // A task that REQUIRES browsing (search box interaction): plain
@@ -60,8 +59,7 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
           limits: { maxDurationMinutes: 5 },
         }),
       );
-      run = handle ?? undefined;
-      return run;
+      return run ?? undefined;
     })();
     return runReady;
   }
@@ -72,12 +70,12 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
   // `onScreenshot` deliver decoded image bytes; no api.* needed.
   function ensureResult() {
     resultReady ??= (async () => {
-      const handle = await ensureRun();
-      if (!handle) return undefined;
-      const recorder = openRawEventRecorder(`do_anything-${handle.id}`);
+      const run = await ensureRun();
+      if (!run) return undefined;
+      const recorder = openRawEventRecorder(`do_anything-${run.id}`);
       recordedDir = recorder.dir;
-      console.log(`recording run ${handle.id} → ${recorder.dir}`);
-      const result = await handle.wait({
+      console.log(`recording run ${run.id} → ${recorder.dir}`);
+      const result = await run.wait({
         timeoutMs: Number(process.env.EAK_LIVE_RUN_AND_WAIT_TIMEOUT_MS || 360_000),
         onEvent: (event) => recorder.record(event),
         onScreenshot: (image) => {
@@ -98,29 +96,29 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
     return resultReady;
   }
 
-  it("doAnything.run({ token, instruction, capture, limits }) returns a handle", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    expect(handle.id).toBeTruthy();
-    expect(handle.sessionRef?.sessionId).toBeTruthy();
+  it("doAnything.run({ token, instruction, capture, limits }) returns a run", async () => {
+    const run = await ensureRun();
+    if (!run) return;
+    expect(run.id).toBeTruthy();
+    expect(run.sessionRef?.sessionId).toBeTruthy();
   });
 
   it("run.status() refreshes the run without re-passing token or ids", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    const status = await handle.status();
-    expect(status.id).toBe(handle.id);
+    const run = await ensureRun();
+    if (!run) return;
+    const status = await run.status();
+    expect(status.id).toBe(run.id);
     expect(status.status).toBeTruthy();
   });
 
   it("run.events() yields normalized semantic events", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    const events = await collectRunEvents((signal) => handle.events({ signal }), {
+    const run = await ensureRun();
+    if (!run) return;
+    const events = await collectRunEvents((signal) => run.events({ signal }), {
       label: "doAnything run.events",
       minEvents: 2,
     });
-    expect(events.some((event) => event.runId === handle.id)).toBe(true);
+    expect(events.some((event) => event.runId === run.id)).toBe(true);
   });
 
   it("run.wait() returns the article title, raw events and screenshots on disk", async () => {
@@ -141,11 +139,11 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
   });
 
   it("run.respond() surfaces a wire error for an unknown input request", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
+    const run = await ensureRun();
+    if (!run) return;
     const requestId = process.env.EAK_LIVE_DO_ANYTHING_REQUEST_ID || `${livePrefix}-noop`;
     try {
-      await handle.respond(requestId, { approved: true });
+      await run.respond(requestId, { approved: true });
       // Reaching here is only expected when a real pending request id was
       // injected via EAK_LIVE_DO_ANYTHING_REQUEST_ID.
     } catch (error) {
@@ -158,22 +156,22 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
   });
 
   it("run.cancel() is idempotent on a settled run", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
+    const run = await ensureRun();
+    if (!run) return;
     await ensureResult();
     // The contract makes cancel idempotent: cancelling a terminal run returns
     // its terminal state instead of throwing a wire 4xx.
-    const status = await handle.cancel("sdk live e2e cleanup");
+    const status = await run.cancel("sdk live e2e cleanup");
     expect(["succeeded", "failed", "canceled"]).toContain(status.status);
   });
 
   it("doAnything.attach() reconnects to the run by id alone", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    const reattached = await client.doAnything.attach(handle.id, { token });
-    expect(reattached.id).toBe(handle.id);
+    const run = await ensureRun();
+    if (!run) return;
+    const reattached = await client.doAnything.attach(run.id, { token });
+    expect(reattached.id).toBe(run.id);
     const status = await reattached.status();
-    expect(status.id).toBe(handle.id);
+    expect(status.id).toBe(run.id);
     // sessionRef is adopted from the run detail envelope.
     expect(reattached.sessionRef?.sessionId).toBeTruthy();
   });
@@ -183,12 +181,12 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
   // session recording read has no semantic counterpart by design (§9 keeps
   // readRecording wire-level).
   it("escape hatch: api.getRun / api.readRecording still speak wire", async () => {
-    const handle = await ensureRun();
-    if (!handle?.sessionRef) return;
-    const sessionId = handle.sessionRef.sessionId;
+    const run = await ensureRun();
+    if (!run?.sessionRef) return;
+    const sessionId = run.sessionRef.sessionId;
     const wire = await client.doAnything.api.getRun<JsonObject>({
       token,
-      runId: handle.id,
+      runId: run.id,
     });
     expect(wire.data).toBeTruthy();
     expect(typeof wire.data.status).toBe("string");

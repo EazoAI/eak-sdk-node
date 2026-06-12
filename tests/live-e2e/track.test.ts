@@ -17,7 +17,6 @@ const describeLiveE2E = liveE2EEnabled ? describe : describe.skip;
 describeLiveE2E("live e2e: Track (semantic surface)", () => {
   let client: ReturnType<typeof liveClient>;
   let token: string;
-  let monitor: MonitorHandle | undefined;
   let monitorReady: Promise<MonitorHandle | undefined> | undefined;
   let deleted = false;
 
@@ -27,8 +26,8 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
   });
 
   afterAll(async () => {
-    if (monitor && !deleted) {
-      await monitor.delete().catch(() => undefined);
+    if (!deleted) {
+      await monitorReady?.then((monitor) => monitor?.delete()).catch(() => undefined);
     }
   });
 
@@ -36,7 +35,7 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
   // every later operation goes through the MonitorHandle.
   function ensureMonitor() {
     monitorReady ??= (async () => {
-      const handle = await allowLiveEnvironmentConstraint(
+      const monitor = await allowLiveEnvironmentConstraint(
         client.track.create({
           token,
           // Plain natural-language intent — no nonce: the intent feeds LLM
@@ -59,22 +58,21 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
           triggerDsl: { on: "change" },
         }),
       );
-      monitor = handle ?? undefined;
-      return monitor;
+      return monitor ?? undefined;
     })();
     return monitorReady;
   }
 
-  it("track.create({ token, intent, schedule, ... }) returns a monitor handle", async () => {
-    const handle = await ensureMonitor();
-    if (!handle) return;
-    expect(handle.id).toBeTruthy();
+  it("track.create({ token, intent, schedule, ... }) returns a monitor monitor", async () => {
+    const monitor = await ensureMonitor();
+    if (!monitor) return;
+    expect(monitor.id).toBeTruthy();
   });
 
   it("monitor.get() returns the normalized monitor definition", async () => {
-    const handle = await ensureMonitor();
-    if (!handle) return;
-    const data = await handle.get();
+    const monitor = await ensureMonitor();
+    if (!monitor) return;
+    const data = await monitor.get();
     // Domain content: the monitor we created, not just a 200.
     expect(JSON.stringify(data)).toContain("Bitcoin");
     // Normalized camelCase — no snake_case keys at the top level.
@@ -82,15 +80,15 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
   });
 
   it("monitor.update() is observable on monitor.events()", async () => {
-    const handle = await ensureMonitor();
-    if (!handle) return;
-    const eventsPromise = collectRunEvents((signal) => handle.events({ signal }), {
+    const monitor = await ensureMonitor();
+    if (!monitor) return;
+    const eventsPromise = collectRunEvents((signal) => monitor.events({ signal }), {
       label: "track monitor.events",
       timeoutMs: 45_000,
       until: (event) => event.raw.event === "monitor.lifecycle_changed",
     });
     await new Promise((resolve) => setTimeout(resolve, 500));
-    await handle.update({
+    await monitor.update({
       action: "refine",
       patch: {
         schedule: { kind: "interval", interval_seconds: 5400 },
@@ -101,9 +99,9 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
   });
 
   it("monitor.runNow() triggers an immediate tick", async () => {
-    const handle = await ensureMonitor();
-    if (!handle) return;
-    await allowLiveEnvironmentConstraint(handle.runNow());
+    const monitor = await ensureMonitor();
+    if (!monitor) return;
+    await allowLiveEnvironmentConstraint(monitor.runNow());
   });
 
   // Raw-recording test, implemented via the semantic stream: every normalized
@@ -117,9 +115,9 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
   // started_at falls after the recording began (replayed history and earlier
   // manual ticks don't count).
   it("records a scheduler-driven tick to disk via event.raw", async () => {
-    const handle = await ensureMonitor();
-    if (!handle) return;
-    await handle.update({
+    const monitor = await ensureMonitor();
+    if (!monitor) return;
+    await monitor.update({
       action: "refine",
       patch: {
         schedule: { kind: "interval", interval_seconds: 60 },
@@ -127,9 +125,9 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
       },
     });
 
-    const recorder = openRawEventRecorder(`track-${handle.id}`);
+    const recorder = openRawEventRecorder(`track-${monitor.id}`);
     const startedAfter = Date.now();
-    console.log(`recording monitor ${handle.id} (waiting for a scheduled tick) → ${recorder.dir}`);
+    console.log(`recording monitor ${monitor.id} (waiting for a scheduled tick) → ${recorder.dir}`);
 
     let freshTickN: number | undefined;
     let sawScheduledTick = false;
@@ -141,7 +139,7 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
     try {
       // Monitor streams have no terminal event — the caller decides when to
       // stop. Tick payloads arrive camelCase on event.data (tickN, startedAt).
-      for await (const event of handle.events({ signal: controller.signal })) {
+      for await (const event of monitor.events({ signal: controller.signal })) {
         recorder.record(event);
         const wireType = String(event.raw.event || "");
         if (wireType === "monitor.tick_started") {
@@ -175,24 +173,24 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
   }, 180_000);
 
   it("monitor.runs() / monitor.run() expose tick runs read-only", async () => {
-    const handle = await ensureMonitor();
-    if (!handle) return;
+    const monitor = await ensureMonitor();
+    if (!monitor) return;
     // By now at least one tick has completed (the recording test witnessed one).
-    const runs = await handle.runs({ limit: 10 });
+    const runs = await monitor.runs({ limit: 10 });
     expect(runs.length).toBeGreaterThan(0);
     const first = runs[0] as JsonObject;
     expect(typeof first.id).toBe("string");
-    const detail = await handle.run(String(first.id));
+    const detail = await monitor.run(String(first.id));
     expect(detail.id).toBe(first.id);
   });
 
   it("monitor.respond() rejects an unknown HITL request with a wire error", async () => {
-    const handle = await ensureMonitor();
-    if (!handle) return;
+    const monitor = await ensureMonitor();
+    if (!monitor) return;
     // No HITL park is pending on this healthy monitor — answering a
     // nonexistent request must surface a clean wire error, not hang.
     try {
-      await handle.respond("sdk-live-nonexistent-request", { acknowledged: true });
+      await monitor.respond("sdk-live-nonexistent-request", { acknowledged: true });
     } catch (error) {
       if (!(error instanceof EAKError)) throw error;
       expect(error.status).toBeGreaterThanOrEqual(400);
@@ -205,16 +203,16 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
   // Escape-hatch smoke: the wire layer (api.*) must keep working for advanced
   // users, but it appears ONLY here — everything above is semantic.
   it("escape hatch: api.getMonitor({ token, monitorId }) still speaks wire", async () => {
-    const handle = await ensureMonitor();
-    if (!handle) return;
-    const wire = await client.track.api.getMonitor<JsonObject>({ token, monitorId: handle.id });
+    const monitor = await ensureMonitor();
+    if (!monitor) return;
+    const wire = await client.track.api.getMonitor<JsonObject>({ token, monitorId: monitor.id });
     expect(wire.data).toBeTruthy();
   });
 
   it("monitor.delete() removes the monitor", async () => {
-    const handle = await ensureMonitor();
-    if (!handle) return;
-    await handle.delete();
+    const monitor = await ensureMonitor();
+    if (!monitor) return;
+    await monitor.delete();
     deleted = true;
   });
 });

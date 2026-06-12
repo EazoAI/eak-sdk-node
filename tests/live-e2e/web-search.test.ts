@@ -33,7 +33,6 @@ function isRecord(value: unknown): value is JsonObject {
 describeLiveE2E("live e2e: Web Search (semantic surface)", () => {
   let client: ReturnType<typeof liveClient>;
   let token: string;
-  let run: RunHandle | undefined;
   let runReady: Promise<RunHandle | undefined> | undefined;
   let resultReady: Promise<RunResult | undefined> | undefined;
   let recordedEvents = 0;
@@ -46,14 +45,14 @@ describeLiveE2E("live e2e: Web Search (semantic surface)", () => {
 
   afterAll(async () => {
     // Semantic cancel is idempotent — safe even when the run already settled.
-    await run?.cancel("sdk live e2e cleanup").catch(() => undefined);
+    await runReady?.then((run) => run?.cancel("sdk live e2e cleanup")).catch(() => undefined);
   });
 
   // One run shared across the file: token passed ONCE at the entry call,
-  // every later operation goes through the handle.
+  // every later operation goes through the run.
   function ensureRun() {
     runReady ??= (async () => {
-      const handle = await allowLiveEnvironmentConstraint(
+      const run = await allowLiveEnvironmentConstraint(
         client.webSearch.run({
           token,
           // A real, evergreen query that search engines can always match.
@@ -64,8 +63,7 @@ describeLiveE2E("live e2e: Web Search (semantic surface)", () => {
           siteWhitelist: SITE_WHITELIST,
         }),
       );
-      run = handle ?? undefined;
-      return run;
+      return run ?? undefined;
     })();
     return runReady;
   }
@@ -75,12 +73,12 @@ describeLiveE2E("live e2e: Web Search (semantic surface)", () => {
   // `event.raw`, so the recorder needs no api.* access.
   function ensureResult() {
     resultReady ??= (async () => {
-      const handle = await ensureRun();
-      if (!handle) return undefined;
-      const recorder = openRawEventRecorder(`web_search-${handle.id}`);
+      const run = await ensureRun();
+      if (!run) return undefined;
+      const recorder = openRawEventRecorder(`web_search-${run.id}`);
       recordedFile = recorder.file;
-      console.log(`recording run ${handle.id} → ${recorder.dir}`);
-      const result = await handle.wait({
+      console.log(`recording run ${run.id} → ${recorder.dir}`);
+      const result = await run.wait({
         timeoutMs: Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 120_000),
         onEvent: (event) => recorder.record(event),
       });
@@ -91,27 +89,27 @@ describeLiveE2E("live e2e: Web Search (semantic surface)", () => {
     return resultReady;
   }
 
-  it("webSearch.run({ token, query, maxResultsPerQuery, siteWhitelist }) returns a handle", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    expect(handle.id).toBeTruthy();
+  it("webSearch.run({ token, query, maxResultsPerQuery, siteWhitelist }) returns a run", async () => {
+    const run = await ensureRun();
+    if (!run) return;
+    expect(run.id).toBeTruthy();
   });
 
   it("run.status() refreshes the run without re-passing token or id", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    const status = await handle.status();
-    expect(status.id).toBe(handle.id);
+    const run = await ensureRun();
+    if (!run) return;
+    const status = await run.status();
+    expect(status.id).toBe(run.id);
     expect(status.status).toBeTruthy();
   });
 
   it("run.events() yields normalized semantic events", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    const events = await collectRunEvents((signal) => handle.events({ signal }), {
+    const run = await ensureRun();
+    if (!run) return;
+    const events = await collectRunEvents((signal) => run.events({ signal }), {
       label: "webSearch run.events",
     });
-    expect(events.some((event) => event.runId === handle.id)).toBe(true);
+    expect(events.some((event) => event.runId === run.id)).toBe(true);
   });
 
   it("run.wait() settles with on-whitelist results and records the raw stream", async () => {
@@ -144,29 +142,29 @@ describeLiveE2E("live e2e: Web Search (semantic surface)", () => {
   });
 
   it("run.respond() fails loudly — webSearch never requests input", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    await expect(handle.respond("nonexistent-request")).rejects.toThrowError(
+    const run = await ensureRun();
+    if (!run) return;
+    await expect(run.respond("nonexistent-request")).rejects.toThrowError(
       /never request input/,
     );
   });
 
   it("run.cancel() is idempotent on a settled run", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
+    const run = await ensureRun();
+    if (!run) return;
     await ensureResult();
     // The contract makes cancel idempotent: cancelling a terminal run returns
     // its terminal state instead of throwing a wire 4xx.
-    const status = await handle.cancel("sdk live e2e cleanup");
+    const status = await run.cancel("sdk live e2e cleanup");
     expect(["succeeded", "failed", "canceled"]).toContain(status.status);
   });
 
   // Escape-hatch smoke: the wire layer (api.*) must keep working for advanced
   // users, but it appears ONLY here — everything above is semantic.
   it("escape hatch: api.get({ token, runId }) still speaks wire", async () => {
-    const handle = await ensureRun();
-    if (!handle) return;
-    const wire = await client.webSearch.api.get<JsonObject>({ token, runId: handle.id });
+    const run = await ensureRun();
+    if (!run) return;
+    const wire = await client.webSearch.api.get<JsonObject>({ token, runId: run.id });
     expect(wire.data).toBeTruthy();
     expect(typeof wire.data.status).toBe("string");
   });
