@@ -1,7 +1,51 @@
-import type { EAKEvent, EAKResponse, EAKTransport, JsonObject, RuntimeTokenInput } from "./types";
+import { EAKError, EAKValidationError } from "./errors";
+import {
+  RunHandle,
+  type CaptureOptions,
+  type RunWireOps,
+  type SessionRef,
+} from "./run-handle";
+import type { RunLimits } from "./do-anything";
+import {
+  isJsonObject,
+  type EAKEvent,
+  type EAKResponse,
+  type EAKTransport,
+  type JsonObject,
+  type RuntimeTokenInput,
+} from "./types";
+
+export interface WebSearchRunOptions {
+  /** Delegation token — passed once here; the returned handle holds it. */
+  token: string;
+  /** Search queries. `query` (single) and `instruction` are accepted sugar. */
+  queries?: string[];
+  query?: string | string[];
+  instruction?: string;
+  capture?: CaptureOptions;
+  /** Not supported by webSearch yet — passing it throws locally. */
+  limits?: RunLimits;
+  /** Not supported by webSearch — searches don't run in reusable sessions. */
+  session?: SessionRef;
+  // Product-specific options stay camelCase.
+  maxResultsPerQuery?: number;
+  siteWhitelist?: string[];
+  siteBlacklist?: string[];
+  [key: string]: unknown;
+}
+
+export interface WebSearchAttachOptions {
+  token: string;
+  capture?: CaptureOptions;
+}
 
 export function createWebSearchNamespace(transport: EAKTransport) {
-  return {
+  /**
+   * Wire-level escape hatch — 1:1 with the backend HTTP contract. Shapes
+   * here may evolve with the API and are not covered by the frozen public
+   * contract.
+   */
+  const api = {
     run: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/web_search/runs", input.token, {
         body: normalizeWebSearchRunInput(omit(input, "token")),
@@ -44,6 +88,84 @@ export function createWebSearchNamespace(transport: EAKTransport) {
         },
       ),
   };
+
+  function buildOps(
+    token: string | undefined,
+    runId: string,
+  ): RunWireOps {
+    return {
+      getDetail: async () => asRecord((await api.get<unknown>({ token, runId })).data),
+      streamEvents: (opts) =>
+        api.events({ token, runId, lastEventId: opts.lastEventId, signal: opts.signal }),
+      respond: async () => {
+        // The webSearch wire has no intervene endpoint and never emits
+        // input requests; failing loudly beats a confusing 404.
+        throw new EAKError(
+          "webSearch runs never request input — respond() is not applicable",
+          { code: "validation.failed" },
+        );
+      },
+      cancel: async (reason) =>
+        asRecord(
+          (
+            await api.cancel<unknown>({
+              token,
+              runId,
+              ...(reason === undefined ? {} : { reason }),
+            })
+          ).data,
+        ),
+    };
+  }
+
+  return {
+    /** Start a search run. Returns a handle — see `RunHandle` for the run lifecycle. */
+    run: async (input: WebSearchRunOptions): Promise<RunHandle> => {
+      const { token, queries, query, instruction, capture, limits, session, ...rest } = input;
+      if (session) {
+        throw new EAKValidationError(
+          "webSearch runs do not execute in reusable sessions — drop the session option",
+        );
+      }
+      if (limits) {
+        throw new EAKValidationError(
+          "webSearch does not support limits yet — drop the limits option",
+        );
+      }
+      const resolvedQueries =
+        queries ??
+        (Array.isArray(query) ? query : query ? [query] : undefined) ??
+        (instruction ? [instruction] : undefined);
+      if (!resolvedQueries || resolvedQueries.length === 0) {
+        throw new EAKValidationError(
+          "webSearch.run requires queries (or the query / instruction sugar)",
+        );
+      }
+
+      const run = await api.run<{ run_id?: string; id?: string }>({
+        token,
+        queries: resolvedQueries,
+        ...rest,
+      });
+      const runId = run.data.run_id || run.data.id;
+      if (!runId) {
+        throw new EAKValidationError("webSearch run create did not return a run id");
+      }
+      return new RunHandle(buildOps(token, runId), { id: runId, capture });
+    },
+
+    /** Reconnect to an existing run. Verifies the run exists before returning. */
+    attach: async (runId: string, opts: WebSearchAttachOptions): Promise<RunHandle> => {
+      const handle = new RunHandle(buildOps(opts.token, runId), {
+        id: runId,
+        capture: opts.capture,
+      });
+      await handle.status();
+      return handle;
+    },
+
+    api,
+  };
 }
 
 function normalizeWebSearchRunInput(input: JsonObject): JsonObject {
@@ -57,6 +179,10 @@ function normalizeWebSearchRunInput(input: JsonObject): JsonObject {
   }
   delete body.query;
   return body;
+}
+
+function asRecord(value: unknown): JsonObject {
+  return isJsonObject(value) ? value : {};
 }
 
 function omit(value: object, ...keys: string[]): JsonObject {

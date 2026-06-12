@@ -30,14 +30,14 @@ describeLiveE2E("live e2e: Deep Research", () => {
 
   afterAll(async () => {
     if (runId && !canceled) {
-      await client.deepResearch.cancel({ token, runId }).catch(() => undefined);
+      await client.deepResearch.api.cancel({ token, runId }).catch(() => undefined);
     }
   });
 
   function ensureRun() {
     runReady ??= (async () => {
       const run = await allowLiveEnvironmentConstraint(
-        client.deepResearch.run({
+        client.deepResearch.api.run({
           token,
           // Plain researchable topic — no livePrefix nonce: the topic fans out
           // into real web searches where the nonce only adds noise; run
@@ -63,7 +63,7 @@ describeLiveE2E("live e2e: Deep Research", () => {
       const id = await ensureRun();
       if (!id) return [];
       return collectSomeEvents(
-        (signal) => client.deepResearch.events({ token, runId: id, signal }),
+        (signal) => client.deepResearch.api.events({ token, runId: id, signal }),
         { label: "deepResearch.events", referenceId: id },
       );
     })();
@@ -78,7 +78,7 @@ describeLiveE2E("live e2e: Deep Research", () => {
   it("deepResearch.get({ runId })", async () => {
     const id = await ensureRun();
     if (!id) return;
-    const run = await client.deepResearch.get({ token, runId: id });
+    const run = await client.deepResearch.api.get({ token, runId: id });
     expect(run.data).toBeTruthy();
   });
 
@@ -96,7 +96,7 @@ describeLiveE2E("live e2e: Deep Research", () => {
       expect("no Deep Research input request emitted").toBeTruthy();
       return;
     }
-    await client.deepResearch.intervene({
+    await client.deepResearch.api.intervene({
       token,
       runId: id,
       requestId,
@@ -108,7 +108,7 @@ describeLiveE2E("live e2e: Deep Research", () => {
     const id = await ensureRun();
     if (!id) return;
     try {
-      await client.deepResearch.followUp({ token, runId: id, text: "Keep the answer concise." });
+      await client.deepResearch.api.followUp({ token, runId: id, text: "Keep the answer concise." });
     } catch (error) {
       if (!(error instanceof EAKError) || error.code !== "task_in_progress") throw error;
       expect(error.message).toContain("in-flight follow-up not yet supported");
@@ -118,7 +118,7 @@ describeLiveE2E("live e2e: Deep Research", () => {
   it("deepResearch.feedback({ rating, feedbackText })", async () => {
     const id = await ensureRun();
     if (!id) return;
-    await client.deepResearch.feedback({
+    await client.deepResearch.api.feedback({
       token,
       runId: id,
       rating: 5,
@@ -129,21 +129,21 @@ describeLiveE2E("live e2e: Deep Research", () => {
   it("deepResearch.listArtifacts({ runId })", async () => {
     const id = await ensureRun();
     if (!id) return;
-    const artifacts = await client.deepResearch.listArtifacts({ token, runId: id });
+    const artifacts = await client.deepResearch.api.listArtifacts({ token, runId: id });
     expect(artifacts.data).toBeTruthy();
   });
 
   it("deepResearch.getArtifact({ runId, artifactId })", async () => {
     const id = await ensureRun();
     if (!id) return;
-    const artifacts = await client.deepResearch.listArtifacts({ token, runId: id });
+    const artifacts = await client.deepResearch.api.listArtifacts({ token, runId: id });
     const artifactId =
       firstArtifactId(artifacts.data) || process.env.EAK_LIVE_DEEP_RESEARCH_ARTIFACT_ID;
     if (!artifactId) {
       expect("no Deep Research artifact available").toBeTruthy();
       return;
     }
-    const artifact = await client.deepResearch.getArtifact({ token, runId: id, artifactId });
+    const artifact = await client.deepResearch.api.getArtifact({ token, runId: id, artifactId });
     expect(artifact.data).toBeTruthy();
   });
 
@@ -166,7 +166,7 @@ describeLiveE2E("live e2e: Deep Research", () => {
       Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 60_000),
     );
     try {
-      for await (const ev of client.deepResearch.events({ token, runId: id, signal })) {
+      for await (const ev of client.deepResearch.api.events({ token, runId: id, signal })) {
         total++;
         fs.appendFileSync(
           eventsFile,
@@ -187,7 +187,7 @@ describeLiveE2E("live e2e: Deep Research", () => {
     const id = await ensureRun();
     if (!id) return;
     try {
-      await client.deepResearch.cancel({ token, runId: id });
+      await client.deepResearch.api.cancel({ token, runId: id });
     } catch (error) {
       // The recording test may have ridden the run to its terminal event —
       // canceling a finished run 4xxes. Accept that.

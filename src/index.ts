@@ -13,16 +13,37 @@ export {
 } from "./errors";
 export type { EAKErrorCode, EAKErrorOptions } from "./errors";
 export { EAKEventTypes } from "./events";
-export { EAKScopeBundles, EAKScopes } from "./scopes";
+export { EAKProductScopes, EAKScopeBundles, EAKScopes } from "./scopes";
+export type { EAKProduct } from "./scopes";
+export { RunHandle } from "./run-handle";
 export type {
-  DoAnythingResult,
-  DoAnythingRunAndWaitInput,
-  DoAnythingRunResult,
+  Artifact,
+  CaptureOptions,
+  RunEventsOptions,
+  RunResult,
+  RunStatus,
+  RunWaitOptions,
+  SessionRef,
+} from "./run-handle";
+export type { RunEvent, RunEventType, RunImage } from "./run-events";
+export { MonitorHandle } from "./track";
+export type {
+  MonitorEventsOptions,
+  MonitorRunsOptions,
+  TrackAttachOptions,
+  TrackCreateOptions,
+} from "./track";
+export type {
+  DoAnythingAttachOptions,
+  DoAnythingRunOptions,
   DoAnythingSnapshot,
+  RunLimits,
   SnapshotImage,
   SnapshotElement,
   SnapshotAction,
 } from "./do-anything";
+export type { WebSearchAttachOptions, WebSearchRunOptions } from "./web-search";
+export type { DeepResearchAttachOptions, DeepResearchRunOptions } from "./deep-research";
 export type {
   GenAuthAccessTokenInput,
   GenAuthAdminToken,
@@ -54,6 +75,7 @@ export type {
   EAKMeta,
   EAKOptions,
   EAKResponse,
+  EAKProductName,
   EAKRuntimeConfig,
   EAKSSEEvent,
   InteractiveDelegationResponse,

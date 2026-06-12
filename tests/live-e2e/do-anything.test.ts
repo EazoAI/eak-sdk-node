@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EAKError, EAKEventTypes } from "../../src";
+import { EAKError, EAKEventTypes, EAKTimeoutError } from "../../src";
 import type { JsonObject } from "../../src";
 import {
   allowLiveEnvironmentConstraint,
@@ -32,7 +32,7 @@ describeLiveE2E("live e2e: Do Anything", () => {
 
   afterAll(async () => {
     if (sessionId && runId && !canceled) {
-      await client.doAnything.cancel({
+      await client.doAnything.api.cancel({
         token,
         sessionId,
         runId,
@@ -44,7 +44,7 @@ describeLiveE2E("live e2e: Do Anything", () => {
   function ensureSession() {
     sessionReady ??= (async () => {
       const session = await allowLiveEnvironmentConstraint(
-        client.doAnything.createSession({
+        client.doAnything.api.createSession({
           token,
           name: `${livePrefix} browser session`,
         }),
@@ -61,7 +61,7 @@ describeLiveE2E("live e2e: Do Anything", () => {
       const sid = await ensureSession();
       if (!sid) return undefined;
       const run = await allowLiveEnvironmentConstraint(
-        client.doAnything.createRun({
+        client.doAnything.api.createRun({
           token,
           sessionId: sid,
           instruction: "Open https://en.wikipedia.org/wiki/Special:Random twice; report the two article titles. Then finish.",
@@ -97,7 +97,7 @@ describeLiveE2E("live e2e: Do Anything", () => {
   it("doAnything.getRun({ sessionId, runId })", async () => {
     const ids = await ensureRun();
     if (!ids) return;
-    const run = await client.doAnything.getRun({ token, ...ids });
+    const run = await client.doAnything.api.getRun({ token, ...ids });
     expect(run.data).toBeTruthy();
   });
 
@@ -106,7 +106,7 @@ describeLiveE2E("live e2e: Do Anything", () => {
     if (!ids) return;
     await collectSomeEvents(
       (signal) =>
-        client.doAnything.events({ token, ...ids, signal, onlyTopLevel: true }),
+        client.doAnything.api.events({ token, ...ids, signal, onlyTopLevel: true }),
       { label: "doAnything.events", referenceId: ids.runId },
     );
   });
@@ -129,7 +129,7 @@ describeLiveE2E("live e2e: Do Anything", () => {
       Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 60_000),
     );
     try {
-      for await (const ev of client.doAnything.events({ token, ...ids, signal })) {
+      for await (const ev of client.doAnything.api.events({ token, ...ids, signal })) {
         total++;
         fs.appendFileSync(
           eventsFile,
@@ -167,7 +167,7 @@ describeLiveE2E("live e2e: Do Anything", () => {
     if (!ids) return;
     const requestId = process.env.EAK_LIVE_DO_ANYTHING_REQUEST_ID || `${livePrefix}-noop`;
     try {
-      await client.doAnything.intervene({
+      await client.doAnything.api.intervene({
         token,
         ...ids,
         requestId,
@@ -185,7 +185,7 @@ describeLiveE2E("live e2e: Do Anything", () => {
   it("doAnything.readRecording({ sessionId })", async () => {
     const sid = await ensureSession();
     if (!sid) return;
-    const recording = await client.doAnything.readRecording({ token, sessionId: sid });
+    const recording = await client.doAnything.api.readRecording({ token, sessionId: sid });
     expect(recording.data).toBeTruthy();
   });
 
@@ -196,7 +196,7 @@ describeLiveE2E("live e2e: Do Anything", () => {
       expect("EAK_LIVE_DO_ANYTHING_ARTIFACT_ID not configured").toBeTruthy();
       return;
     }
-    const artifact = await client.doAnything.readArtifacts({
+    const artifact = await client.doAnything.api.readArtifacts({
       token,
       sessionId: sid,
       artifactId: process.env.EAK_LIVE_DO_ANYTHING_ARTIFACT_ID,
@@ -208,7 +208,7 @@ describeLiveE2E("live e2e: Do Anything", () => {
     const ids = await ensureRun();
     if (!ids) return;
     try {
-      await client.doAnything.cancel({
+      await client.doAnything.api.cancel({
         token,
         ...ids,
         reason: "sdk live e2e cleanup",
@@ -221,14 +221,25 @@ describeLiveE2E("live e2e: Do Anything", () => {
     canceled = true;
   });
 
-  it("doAnything.runAndWait({ instruction, timeoutMs })", async () => {
-    const settled = await allowLiveEnvironmentConstraint(
-      client.doAnything.runAndWait({
+  it("doAnything.run({ instruction }) + wait({ timeoutMs })", async () => {
+    const handle = await allowLiveEnvironmentConstraint(
+      client.doAnything.run({
         token,
         instruction: "Open https://example.com and return the page title.",
-        timeoutMs: Number(process.env.EAK_LIVE_RUN_AND_WAIT_TIMEOUT_MS || 60_000),
+        limits: { maxDurationMinutes: 5 },
       }),
     );
-    if (settled) expect(settled.runId).toBeTruthy();
+    if (!handle) return;
+    try {
+      const result = await handle.wait({
+        timeoutMs: Number(process.env.EAK_LIVE_RUN_AND_WAIT_TIMEOUT_MS || 60_000),
+      });
+      expect(result.runId).toBe(handle.id);
+    } catch (error) {
+      // The client-side cap elapsed — the run keeps executing server-side;
+      // clean it up so the live environment is not left with a stray run.
+      if (!(error instanceof EAKTimeoutError)) throw error;
+      await handle.cancel("sdk live e2e cleanup").catch(() => undefined);
+    }
   });
 });

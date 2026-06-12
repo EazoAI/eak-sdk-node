@@ -236,7 +236,7 @@ describe("EazoAgentKit", () => {
             authorizationUrl: "https://eak.example.com/authorize?grant_id=grant_interactive",
             grantId: "grant_interactive",
             grantState: "grant_state_1",
-            requestedScopes: ["gumem.memory:read", "webagent.run"],
+            requestedScopes: ["gumem.memory:read", "webagent.do_anything:run"],
           },
           meta: { requestId: "req_interactive" },
         });
@@ -248,7 +248,7 @@ describe("EazoAgentKit", () => {
       redirectUri: "https://app.example.com/eak/callback",
       state: "business_state_1",
       agent: "research-assistant",
-      scopes: ["gumem.memory:read", "webagent.run"],
+      scopes: ["gumem.memory:read", "webagent.do_anything:run"],
     });
 
     expect(seen.url).toBe("https://eak.example.com/api/v3/eak/delegations");
@@ -258,7 +258,7 @@ describe("EazoAgentKit", () => {
       redirectUri: "https://app.example.com/eak/callback",
       state: "business_state_1",
       agent: "research-assistant",
-      scopes: ["gumem.memory:read", "webagent.run"],
+      scopes: ["gumem.memory:read", "webagent.do_anything:run"],
     });
     expect(result.data).toMatchObject({
       mode: "interactive",
@@ -266,7 +266,7 @@ describe("EazoAgentKit", () => {
       grantId: "grant_interactive",
       grantState: "grant_state_1",
       state: "grant_state_1",
-      requestedScopes: ["gumem.memory:read", "webagent.run"],
+      requestedScopes: ["gumem.memory:read", "webagent.do_anything:run"],
     });
   });
 
@@ -766,7 +766,7 @@ describe("EazoAgentKit", () => {
       mode: "silent",
     });
     await client.gumem.recall({ token, sessionId: "default", query: "memory" });
-    await client.doAnything.createSession({ token });
+    await client.doAnything.api.createSession({ token });
 
     expect(calls.map((call) => call.url)).toEqual([
       "https://console.example.com/api/v3/eak/runtime-config",
@@ -832,7 +832,7 @@ describe("EazoAgentKit", () => {
       sessionId: "default",
       query: "memory",
     });
-    await client.doAnything.createSession({ token });
+    await client.doAnything.api.createSession({ token });
 
     expect(calls.map((call) => call.url)).toEqual([
       "https://console.example.com/api/v3/eak/runtime-config",
@@ -1055,7 +1055,7 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.doAnything.createSession({ token, instructions: "open docs" });
+    await client.doAnything.api.createSession({ token, instructions: "open docs" });
 
     expect(calls.map((call) => call.url)).toEqual([
       "https://webagent.example.com/api/v1/projects/web_tnt_1/do_anything/sessions",
@@ -1137,22 +1137,22 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.doAnything.createRun({ token: delegationToken, sessionId: "sess_1", instruction: "open docs" });
-    await client.doAnything.getRun({ token: delegationToken, sessionId: "sess_1", runId: "run_1" });
-    await client.doAnything.cancel({ token: delegationToken, sessionId: "sess_1", runId: "run_1" });
-    await client.doAnything.intervene({ token: delegationToken, sessionId: "sess_1", runId: "run_1", text: "continue" });
-    await client.webSearch.run({ token: delegationToken, query: "EAK" });
-    await client.webSearch.get({ token: delegationToken, runId: "search_1" });
-    await client.webSearch.cancel({ token: delegationToken, runId: "search_1" });
-    await client.deepResearch.run({ token: delegationToken, topic: "EAK" });
-    await client.deepResearch.get({ token: delegationToken, runId: "research_1" });
-    await client.deepResearch.cancel({ token: delegationToken, runId: "research_1" });
-    await client.deepResearch.followUp({ token: delegationToken, runId: "research_1", text: "more" });
-    await client.track.createMonitor({ token: delegationToken, url: "https://example.com" });
-    await client.track.getMonitor({ token: delegationToken, monitorId: "monitor_1" });
-    await client.track.runNow({ token: delegationToken, monitorId: "monitor_1" });
-    await client.track.deleteMonitor({ token: delegationToken, monitorId: "monitor_1" });
-    await client.track.updateMonitor({ token: delegationToken, monitorId: "monitor_1", title: "updated" });
+    await client.doAnything.api.createRun({ token: delegationToken, sessionId: "sess_1", instruction: "open docs" });
+    await client.doAnything.api.getRun({ token: delegationToken, sessionId: "sess_1", runId: "run_1" });
+    await client.doAnything.api.cancel({ token: delegationToken, sessionId: "sess_1", runId: "run_1" });
+    await client.doAnything.api.intervene({ token: delegationToken, sessionId: "sess_1", runId: "run_1", text: "continue" });
+    await client.webSearch.api.run({ token: delegationToken, query: "EAK" });
+    await client.webSearch.api.get({ token: delegationToken, runId: "search_1" });
+    await client.webSearch.api.cancel({ token: delegationToken, runId: "search_1" });
+    await client.deepResearch.api.run({ token: delegationToken, topic: "EAK" });
+    await client.deepResearch.api.get({ token: delegationToken, runId: "research_1" });
+    await client.deepResearch.api.cancel({ token: delegationToken, runId: "research_1" });
+    await client.deepResearch.api.followUp({ token: delegationToken, runId: "research_1", text: "more" });
+    await client.track.api.createMonitor({ token: delegationToken, url: "https://example.com" });
+    await client.track.api.getMonitor({ token: delegationToken, monitorId: "monitor_1" });
+    await client.track.api.runNow({ token: delegationToken, monitorId: "monitor_1" });
+    await client.track.api.deleteMonitor({ token: delegationToken, monitorId: "monitor_1" });
+    await client.track.api.updateMonitor({ token: delegationToken, monitorId: "monitor_1", title: "updated" });
 
     expect(exchanges).toEqual([
       { subjectToken: delegationToken, resource: "webagent", scopes: ["webagent.do_anything:run"] },
@@ -1190,7 +1190,7 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.doAnything.createRun({
+    await client.doAnything.api.createRun({
       token,
       sessionId: "sess_1",
       instructions: "open the site",
@@ -1218,7 +1218,7 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.doAnything.intervene({
+    await client.doAnything.api.intervene({
       token,
       sessionId: "sess_1",
       runId: "run_1",
@@ -1252,7 +1252,7 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.doAnything.readArtifacts({ token, sessionId: "session_1", artifactId: "artifact_1" });
+    await client.doAnything.api.readArtifacts({ token, sessionId: "session_1", artifactId: "artifact_1" });
 
     expect(seen.url).toBe(
       "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions/session_1/artifacts/artifact_1",
@@ -1282,17 +1282,18 @@ describe("EazoAgentKit", () => {
     const run = await client.doAnything.run({
       token,
       instruction: "open the docs",
-      stream: { events: [EAKEventTypes.RUN_SCREENSHOT] },
+      capture: { screenshots: true },
     });
 
-    expect(run.data).toMatchObject({ id: "run_auto", session_id: "sess_auto" });
+    expect(run.id).toBe("run_auto");
+    expect(run.sessionRef).toEqual({ sessionId: "sess_auto" });
     expect(urls).toEqual([
       "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions",
       "https://eak.example.com/api/v1/projects/tenant_1/do_anything/sessions/sess_auto/runs",
     ]);
     expect(bodies[1]).toMatchObject({
       instructions: "open the docs",
-      stream: { events: [EAKEventTypes.RUN_SCREENSHOT] },
+      stream: { events: expect.arrayContaining([EAKEventTypes.RUN_SCREENSHOT]) },
     });
   });
 
@@ -1310,7 +1311,7 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.webSearch.run({
+    await client.webSearch.api.run({
       token,
       query: "EAK SDK",
       maxResultsPerQuery: 3,
@@ -1342,7 +1343,7 @@ describe("EazoAgentKit", () => {
     });
 
     const events = [];
-    for await (const event of client.doAnything.events({
+    for await (const event of client.doAnything.api.events({
       token,
       sessionId: "sess_1",
       runId: "run_1",
@@ -1378,7 +1379,7 @@ describe("EazoAgentKit", () => {
     });
 
     const events = [];
-    for await (const event of client.doAnything.events({
+    for await (const event of client.doAnything.api.events({
       token,
       sessionId: "sess_1",
       runId: "run_1",
@@ -1441,7 +1442,7 @@ describe("EazoAgentKit", () => {
     });
 
     const events = [];
-    for await (const event of client.doAnything.events({
+    for await (const event of client.doAnything.api.events({
       token,
       sessionId: "sess_1",
       runId: "run_1",
@@ -1474,7 +1475,7 @@ describe("EazoAgentKit", () => {
     });
 
     const ids: (string | undefined)[] = [];
-    for await (const event of client.doAnything.events({
+    for await (const event of client.doAnything.api.events({
       token,
       sessionId: "sess_1",
       runId: "run_1",
@@ -1525,7 +1526,7 @@ describe("EazoAgentKit", () => {
     });
 
     const events = [];
-    for await (const event of client.doAnything.events({
+    for await (const event of client.doAnything.api.events({
       token,
       sessionId: "sess_1",
       runId: "run_1",
@@ -1537,7 +1538,7 @@ describe("EazoAgentKit", () => {
     expect(events).toEqual([EAKEventTypes.RUN_ACTION_STARTED, EAKEventTypes.RUN_COMPLETED]);
   });
 
-  it("runAndWait drives a run to terminal and reports the settled outcome", async () => {
+  it("run().wait() drives a run to terminal and settles from the run-detail envelope", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const actions: unknown[] = [];
     const client = new EazoAgentKit({
@@ -1559,6 +1560,7 @@ describe("EazoAgentKit", () => {
             data: {
               run_id: "run_1",
               session_id: "sess_1",
+              status: "succeeded",
               terminal_reason: "done",
               is_task_successful: true,
               output: "the title",
@@ -1569,30 +1571,32 @@ describe("EazoAgentKit", () => {
         }
         // events SSE: one action, then terminal completion (leaner payload).
         return sseResponse(
-          'id: 1\ndata: {"type":"run.action.started","data":{"kind":"navigate"}}\n\n' +
-            'id: 2\ndata: {"type":"run.completed","data":{"terminal_reason":"done","output":"the title"}}\n\n',
+          'id: 1\ndata: {"type":"run.action.started","task_id":"run_1","data":{"kind":"navigate"}}\n\n' +
+            'id: 2\ndata: {"type":"run.completed","task_id":"run_1","data":{"terminal_reason":"done","output":"the title"}}\n\n',
         );
       }) as typeof fetch,
     });
 
-    const result = await client.doAnything.runAndWait({
+    const run = await client.doAnything.run({
       token,
       instruction: "open the page and read the title",
-      onAction: (payload) => {
-        actions.push(payload.kind);
+    });
+    const result = await run.wait({
+      onEvent: (event) => {
+        if (event.type === "action") actions.push(event.data.kind);
       },
     });
 
     expect(result).toMatchObject({
       runId: "run_1",
-      sessionId: "sess_1",
       status: "succeeded",
       terminalReason: "done",
       isTaskSuccessful: true,
       output: "the title",
+      artifacts: [],
     });
-    // #2: cost / steps are missing from the run.completed event but present on
-    // result.raw because runAndWait settles from the getRun envelope.
+    // Cost / steps are missing from the run.completed event but present on
+    // result.raw because wait() settles from the getRun envelope.
     expect(result.raw?.total_cost_usd).toBe("0.42");
     expect(result.raw?.step_count).toBe(7);
     expect(actions).toEqual(["navigate"]);
@@ -1735,7 +1739,7 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.doAnything.createRun({
+    await client.doAnything.api.createRun({
       token,
       sessionId: "sess_1",
       instruction: "open the site",
@@ -1766,8 +1770,8 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.webSearch.get({ token, runId: "run_1" });
-    await client.webSearch.cancel({ token, runId: "run_1", reason: "duplicate" });
+    await client.webSearch.api.get({ token, runId: "run_1" });
+    await client.webSearch.api.cancel({ token, runId: "run_1", reason: "duplicate" });
 
     const base = "https://eak.example.com/api/v1/projects/tenant_1/web_search/runs/run_1";
     expect(calls).toEqual([
@@ -1794,7 +1798,7 @@ describe("EazoAgentKit", () => {
     });
 
     const events = [];
-    for await (const event of client.webSearch.events({
+    for await (const event of client.webSearch.api.events({
       token,
       runId: "run_1",
       lastEventId: "0",
@@ -1834,15 +1838,15 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.track.createMonitor({
+    await client.track.api.createMonitor({
       token,
       url: "https://eazo.ai/pricing",
       instructions: "alert me when the price changes",
     });
-    await client.track.getMonitor({ token, monitorId: "mon_1" });
-    await client.track.runNow({ token, monitorId: "mon_1" });
-    await client.track.updateMonitor({ token, monitorId: "mon_1", schedule: "0 9 * * *" });
-    await client.track.deleteMonitor({ token, monitorId: "mon_1" });
+    await client.track.api.getMonitor({ token, monitorId: "mon_1" });
+    await client.track.api.runNow({ token, monitorId: "mon_1" });
+    await client.track.api.updateMonitor({ token, monitorId: "mon_1", schedule: "0 9 * * *" });
+    await client.track.api.deleteMonitor({ token, monitorId: "mon_1" });
 
     const monitors = "https://eak.example.com/api/v1/projects/tenant_1/track/monitors";
     expect(calls).toEqual([
@@ -1877,7 +1881,7 @@ describe("EazoAgentKit", () => {
     });
 
     const events = [];
-    for await (const event of client.track.events({
+    for await (const event of client.track.api.events({
       token,
       monitorId: "mon_1",
       lastEventId: "6",
@@ -1912,7 +1916,7 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    const run = await client.deepResearch.run<{ id: string }>({
+    const run = await client.deepResearch.api.run<{ id: string }>({
       token,
       topic: "state of EU battery recycling 2026",
       depth: "deep",
@@ -1961,20 +1965,20 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.deepResearch.get({ token, runId: "dr_run_1" });
-    await client.deepResearch.intervene({
+    await client.deepResearch.api.get({ token, runId: "dr_run_1" });
+    await client.deepResearch.api.intervene({
       token,
       runId: "dr_run_1",
       requestId: "req_outline_1",
       response: "approve",
     });
-    await client.deepResearch.followUp({
+    await client.deepResearch.api.followUp({
       token,
       runId: "dr_run_1",
       text: "also compare against 2025",
     });
-    await client.deepResearch.cancel({ token, runId: "dr_run_1" });
-    await client.deepResearch.feedback({
+    await client.deepResearch.api.cancel({ token, runId: "dr_run_1" });
+    await client.deepResearch.api.feedback({
       token,
       runId: "dr_run_1",
       thumbs: "up",
@@ -2018,8 +2022,8 @@ describe("EazoAgentKit", () => {
       }) as typeof fetch,
     });
 
-    await client.deepResearch.listArtifacts({ token, runId: "dr_run_1" });
-    await client.deepResearch.getArtifact({
+    await client.deepResearch.api.listArtifacts({ token, runId: "dr_run_1" });
+    await client.deepResearch.api.getArtifact({
       token,
       runId: "dr_run_1",
       artifactId: "art_1",
@@ -2050,7 +2054,7 @@ describe("EazoAgentKit", () => {
     });
 
     const events = [];
-    for await (const event of client.deepResearch.events({
+    for await (const event of client.deepResearch.api.events({
       token,
       runId: "dr_run_1",
       lastEventId: "0",

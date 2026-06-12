@@ -28,14 +28,14 @@ describeLiveE2E("live e2e: Web Search", () => {
 
   afterAll(async () => {
     if (runId && !canceled) {
-      await client.webSearch.cancel({ token, runId, reason: "sdk live e2e cleanup" }).catch(() => undefined);
+      await client.webSearch.api.cancel({ token, runId, reason: "sdk live e2e cleanup" }).catch(() => undefined);
     }
   });
 
   function ensureRun() {
     runReady ??= (async () => {
       const run = await allowLiveEnvironmentConstraint(
-        client.webSearch.run({
+        client.webSearch.api.run({
           token,
           // A real, evergreen query that search engines can always match.
           // Do NOT embed livePrefix here: engines tokenize the nonce into
@@ -61,7 +61,7 @@ describeLiveE2E("live e2e: Web Search", () => {
   it("webSearch.get({ runId })", async () => {
     const id = await ensureRun();
     if (!id) return;
-    const run = await client.webSearch.get({ token, runId: id });
+    const run = await client.webSearch.api.get({ token, runId: id });
     expect(run.data).toBeTruthy();
   });
 
@@ -69,7 +69,7 @@ describeLiveE2E("live e2e: Web Search", () => {
     const id = await ensureRun();
     if (!id) return;
     await collectSomeEvents(
-      (signal) => client.webSearch.events({ token, runId: id, signal }),
+      (signal) => client.webSearch.api.events({ token, runId: id, signal }),
       { label: "webSearch.events", referenceId: id },
     );
   });
@@ -92,7 +92,7 @@ describeLiveE2E("live e2e: Web Search", () => {
       Number(process.env.EAK_LIVE_STREAM_TIMEOUT_MS || 60_000),
     );
     try {
-      for await (const ev of client.webSearch.events({ token, runId: id, signal })) {
+      for await (const ev of client.webSearch.api.events({ token, runId: id, signal })) {
         total++;
         fs.appendFileSync(
           eventsFile,
@@ -133,7 +133,7 @@ describeLiveE2E("live e2e: Web Search", () => {
     const id = await ensureRun();
     if (!id) return;
     try {
-      await client.webSearch.cancel({ token, runId: id, reason: "sdk live e2e cleanup" });
+      await client.webSearch.api.cancel({ token, runId: id, reason: "sdk live e2e cleanup" });
     } catch (error) {
       // The recording test may have ridden the run to its terminal event —
       // canceling a finished run 4xxes. Accept that.

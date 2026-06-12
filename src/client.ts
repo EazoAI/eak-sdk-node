@@ -5,10 +5,12 @@ import { createEakNamespace } from "./eak";
 import {
   EAKError,
   EAKDelegationRequiredError,
+  EAKValidationError,
   errorFromPayload,
   networkError,
   timeoutError,
 } from "./errors";
+import { EAKProductScopes, KNOWN_SCOPES, type EAKProduct } from "./scopes";
 import { createGenAuthNamespace } from "./genauth";
 import { createGumemNamespace } from "./gumem";
 import { createTrackNamespace } from "./track";
@@ -78,6 +80,7 @@ export class EazoAgentKit {
       gumemJson: (...args) => this.gumemJson(...args),
       gumemSSE: (...args) => this.gumemSSE(...args),
       webAgentJson: (...args) => this.webAgentJson(...args),
+      webAgentBytes: (...args) => this.webAgentBytes(...args),
       webAgentSSE: (...args) => this.webAgentSSE(...args),
     };
     this.genauth = createGenAuthNamespace(transport, {
@@ -101,9 +104,17 @@ export class EazoAgentKit {
   delegateToken(input: DelegateTokenSilentInput): Promise<EAKResponse<DelegateTokenSilentResponse>>;
   delegateToken(input: DelegateTokenInput): Promise<EAKResponse<DelegateAgentResponse>>;
   delegateToken(input: DelegateTokenInput): Promise<EAKResponse<DelegateAgentResponse>> {
+    // Scope pre-validation + products expansion happen BEFORE any request, so
+    // format mistakes fail locally with the correct form in the message.
+    let body: JsonObject;
+    try {
+      body = normalizeDelegateTokenInput(input);
+    } catch (err) {
+      return Promise.reject(err);
+    }
     return this.signedPost<DelegateAgentResponse>(
       "/api/v3/eak/delegations",
-      normalizeDelegateTokenInput(input),
+      body,
     ).then(normalizeDelegateAgentTokenResponse);
   }
 
@@ -242,6 +253,40 @@ export class EazoAgentKit {
       this.webAgentPath(runtimeToken, path),
       { ...payload, method, token: runtimeToken, service: "webagent" },
     );
+  }
+
+  // Binary GET against the WebAgent API — artifact content downloads. JSON
+  // error payloads still map to typed EAKErrors.
+  private async webAgentBytes(
+    path: string,
+    token?: string,
+    payload: RequestPayload = {},
+  ): Promise<{ bytes: Uint8Array; mime: string }> {
+    const runtimeToken = await this.productTokenFor("webagent", token, payload.requiredScopes);
+    const baseUrl = await this.baseUrlFor("webagent");
+    const response = await this.fetchWithTimeout(
+      urlWithBasePath(baseUrl, this.webAgentPath(runtimeToken, path), payload.query),
+      {
+        method: "GET",
+        headers: {
+          accept: "*/*",
+          authorization: `Bearer ${runtimeToken}`,
+          ...(payload.headers || {}),
+        },
+      },
+    );
+    if (!response.ok) {
+      throw errorFromPayload(
+        response.status,
+        await readJson(response),
+        `EAK request failed with HTTP ${response.status}`,
+      );
+    }
+    const buffer = await response.arrayBuffer();
+    return {
+      bytes: new Uint8Array(buffer),
+      mime: response.headers.get("content-type") || "application/octet-stream",
+    };
   }
 
   private async *webAgentSSE<T>(
@@ -808,7 +853,61 @@ function normalizeDelegateTokenInput(input: DelegateTokenInput): JsonObject {
   if (!body.userId && isJsonObject(input.user) && typeof input.user.id === "string") {
     body.userId = input.user.id;
   }
+  body.agent = input.agent ?? "sdk";
+  body.scopes = resolveDelegationScopes(input.scopes, input.products);
+  delete body.products;
   return body;
+}
+
+/**
+ * Merge explicit scopes with the `products` sugar expansion, pre-validating
+ * scope formats locally so typos fail before any request is made.
+ */
+function resolveDelegationScopes(
+  scopes: readonly string[] | undefined,
+  products: readonly string[] | undefined,
+): string[] {
+  const resolved = new Set<string>();
+  for (const product of products ?? []) {
+    const expansion = EAKProductScopes[product as EAKProduct];
+    if (!expansion) {
+      throw new EAKValidationError(
+        `delegateToken: unknown product "${product}" — expected one of ` +
+          `${Object.keys(EAKProductScopes).join(", ")}`,
+      );
+    }
+    for (const scope of expansion) resolved.add(scope);
+  }
+  for (const scope of scopes ?? []) {
+    validateScopeFormat(scope);
+    resolved.add(scope);
+  }
+  if (resolved.size === 0) {
+    throw new EAKValidationError(
+      "delegateToken requires at least one scope — pass scopes (e.g. " +
+        '["webagent.do_anything:run"]) and/or products (e.g. ["doAnything"])',
+    );
+  }
+  return [...resolved];
+}
+
+function validateScopeFormat(scope: string): void {
+  if (KNOWN_SCOPES.includes(scope)) return;
+  // A known scope minus its service prefix — the most common mistake.
+  const prefixed = KNOWN_SCOPES.find((known) => known.endsWith(`.${scope}`) || known === `webagent.${scope}`);
+  if (prefixed) {
+    throw new EAKValidationError(
+      `delegateToken: scope "${scope}" is missing its service prefix — write "${prefixed}"`,
+    );
+  }
+  // Unknown scopes are allowed if well-formed (the server is the authority on
+  // newly added scopes); malformed ones fail locally with the correct form.
+  if (!/^[a-z0-9_]+(\.[a-z0-9_]+)+:[a-z0-9_]+$/.test(scope)) {
+    throw new EAKValidationError(
+      `delegateToken: malformed scope "${scope}" — scopes look like ` +
+        '"<service>.<resource>:<action>", e.g. "webagent.do_anything:run"',
+    );
+  }
 }
 
 function errorEnvelopeStatus(payload: unknown): number | undefined {

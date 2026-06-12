@@ -27,14 +27,14 @@ describeLiveE2E("live e2e: Track", () => {
 
   afterAll(async () => {
     if (monitorId && !deleted) {
-      await client.track.deleteMonitor({ token, monitorId }).catch(() => undefined);
+      await client.track.api.deleteMonitor({ token, monitorId }).catch(() => undefined);
     }
   });
 
   function ensureMonitor() {
     monitorReady ??= (async () => {
       const monitor = await allowLiveEnvironmentConstraint(
-        client.track.createMonitor({
+        client.track.api.createMonitor({
           token,
           // Plain natural-language intent — no livePrefix nonce: the intent
           // feeds LLM alignment, and traceability comes from monitorId.
@@ -69,21 +69,21 @@ describeLiveE2E("live e2e: Track", () => {
   it("track.getMonitor({ monitorId })", async () => {
     const id = await ensureMonitor();
     if (!id) return;
-    const monitor = await client.track.getMonitor({ token, monitorId: id });
+    const monitor = await client.track.api.getMonitor({ token, monitorId: id });
     expect(monitor.data).toBeTruthy();
   });
 
   it("track.runNow({ monitorId })", async () => {
     const id = await ensureMonitor();
     if (!id) return;
-    await allowLiveEnvironmentConstraint(client.track.runNow({ token, monitorId: id }));
+    await allowLiveEnvironmentConstraint(client.track.api.runNow({ token, monitorId: id }));
   });
 
   it("track.events({ monitorId, signal })", async () => {
     const id = await ensureMonitor();
     if (!id) return;
     const events = collectSomeEvents(
-      (signal) => client.track.events({ token, monitorId: id, signal }),
+      (signal) => client.track.api.events({ token, monitorId: id, signal }),
       {
         label: "track.events",
         referenceId: id,
@@ -92,7 +92,7 @@ describeLiveE2E("live e2e: Track", () => {
       },
     );
     await new Promise((resolve) => setTimeout(resolve, 500));
-    await client.track.updateMonitor({
+    await client.track.api.updateMonitor({
       token,
       monitorId: id,
       action: "refine",
@@ -107,7 +107,7 @@ describeLiveE2E("live e2e: Track", () => {
   it("track.updateMonitor({ action, patch })", async () => {
     const id = await ensureMonitor();
     if (!id) return;
-    await client.track.updateMonitor({
+    await client.track.api.updateMonitor({
       token,
       monitorId: id,
       action: "refine",
@@ -130,7 +130,7 @@ describeLiveE2E("live e2e: Track", () => {
   it("records a scheduler-driven tick to disk", async () => {
     const id = await ensureMonitor();
     if (!id) return;
-    await client.track.updateMonitor({
+    await client.track.api.updateMonitor({
       token,
       monitorId: id,
       action: "refine",
@@ -155,7 +155,7 @@ describeLiveE2E("live e2e: Track", () => {
       Number(process.env.EAK_LIVE_TRACK_TICK_TIMEOUT_MS || 150_000),
     );
     try {
-      for await (const ev of client.track.events({ token, monitorId: id, signal })) {
+      for await (const ev of client.track.api.events({ token, monitorId: id, signal })) {
         total++;
         fs.appendFileSync(
           eventsFile,
@@ -192,7 +192,7 @@ describeLiveE2E("live e2e: Track", () => {
   it("track.deleteMonitor({ monitorId })", async () => {
     const id = await ensureMonitor();
     if (!id) return;
-    await client.track.deleteMonitor({ token, monitorId: id });
+    await client.track.api.deleteMonitor({ token, monitorId: id });
     deleted = true;
   });
 });
