@@ -110,7 +110,7 @@ export class RunHandle {
   /** Refresh and return the run's current state. */
   async status(): Promise<RunStatus> {
     const detail = await this.ops.getDetail();
-    this.adoptSessionRef(detail);
+    this.#adoptSessionRef(detail);
     return normalizeRunStatus(this.id, detail);
   }
 
@@ -191,7 +191,7 @@ export class RunHandle {
       if (!terminalPayload) throw err;
       detail = terminalPayload;
     }
-    this.adoptSessionRef(detail);
+    this.#adoptSessionRef(detail);
     const artifacts = this.ops.listArtifacts ? await this.ops.listArtifacts() : [];
     return settleRunResult(this.id, detail, artifacts);
   }
@@ -211,7 +211,7 @@ export class RunHandle {
   async cancel(reason?: string): Promise<RunStatus> {
     try {
       const data = await this.ops.cancel(reason);
-      this.adoptSessionRef(data);
+      this.#adoptSessionRef(data);
       return normalizeRunStatus(this.id, data);
     } catch (err) {
       if (err instanceof EAKError && CANCEL_IDEMPOTENT_STATUSES.has(err.status ?? 0)) {
@@ -227,7 +227,7 @@ export class RunHandle {
     }
   }
 
-  private adoptSessionRef(detail: JsonObject): void {
+  #adoptSessionRef(detail: JsonObject): void {
     const sessionId = typeof detail.session_id === "string" ? detail.session_id : undefined;
     if (sessionId && !this.sessionRef) this.sessionRef = { sessionId };
   }

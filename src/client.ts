@@ -449,6 +449,7 @@ export class EazoAgentKit {
         },
       },
       options.signal,
+      { streamBody: true },
     );
     if (!response.ok) {
       throw errorFromPayload(
@@ -466,6 +467,12 @@ export class EazoAgentKit {
     let buffer = "";
     try {
       while (true) {
+        // Belt and braces: even if abort → reader rejection plumbing fails,
+        // notice the aborted signal at the next delivered chunk/heartbeat.
+        if (options.signal?.aborted) {
+          await reader.cancel().catch(() => undefined);
+          throw options.signal.reason || new DOMException("Aborted", "AbortError");
+        }
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -487,6 +494,7 @@ export class EazoAgentKit {
     input: URL,
     init: RequestInit,
     signal?: AbortSignal,
+    opts?: { streamBody?: boolean },
   ): Promise<Response> {
     if (signal?.aborted) throw signal.reason || new DOMException("Aborted", "AbortError");
     const controller = new AbortController();
@@ -514,7 +522,12 @@ export class EazoAgentKit {
       throw error;
     } finally {
       clearTimeout(timeout);
-      signal?.removeEventListener("abort", abortFromSignal);
+      // For one-shot requests the body is consumed before we return, so the
+      // user-signal → request-controller link can be dropped here. For SSE the
+      // body outlives this call — keep the link so a later abort still kills
+      // the stream (the listener is once:true and the controller is per-call,
+      // so nothing accumulates beyond the connection's lifetime).
+      if (!opts?.streamBody) signal?.removeEventListener("abort", abortFromSignal);
     }
   }
 
