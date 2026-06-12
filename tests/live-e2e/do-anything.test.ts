@@ -19,6 +19,11 @@ const describeLiveE2E = liveE2EEnabled ? describe : describe.skip;
 // The exact Wikipedia article title the browsing task below must surface.
 const EXPECTED_TITLE_RE = /universally unique identifier/i;
 
+// A real browsing run (search-box interaction on browserbase) measures
+// ~150s — well past the suite's 120s default testTimeout, so the wait test
+// carries its own budget like the deep-research one does.
+const WAIT_TIMEOUT_MS = Number(process.env.EAK_LIVE_WAIT_TIMEOUT_MS || 360_000);
+
 // Live coverage of the frozen contract's mainline (public-surface doc §2/§4):
 // run() → RunHandle → wait(), token passed once at the entry call, screenshots
 // via the semantic capture switch, domain content asserted from result.output.
@@ -76,7 +81,7 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
       recordedDir = recorder.dir;
       console.log(`recording run ${run.id} → ${recorder.dir}`);
       const result = await run.wait({
-        timeoutMs: Number(process.env.EAK_LIVE_WAIT_TIMEOUT_MS || 360_000),
+        timeoutMs: WAIT_TIMEOUT_MS,
         onEvent: (event) => recorder.record(event),
         onScreenshot: (image) => {
           expect(image.bytes.byteLength).toBeGreaterThan(0);
@@ -121,7 +126,9 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
     expect(events.some((event) => event.runId === run.id)).toBe(true);
   });
 
-  it("run.wait() returns the article title, raw events and screenshots on disk", async () => {
+  it(
+    "run.wait() returns the article title, raw events and screenshots on disk",
+    async () => {
     const result = await ensureResult();
     if (!result) return;
 
@@ -136,7 +143,9 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
     expect(savedScreenshots).toBeGreaterThan(0);
     expect(recordedEvents).toBeGreaterThan(0);
     expect(recordedDir && fs.existsSync(path.join(recordedDir, "events.jsonl"))).toBe(true);
-  });
+    },
+    WAIT_TIMEOUT_MS + 60_000,
+  );
 
   it("run.respond() surfaces a wire error for an unknown input request", async () => {
     const run = await ensureRun();
