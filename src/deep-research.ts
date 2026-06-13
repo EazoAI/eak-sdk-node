@@ -6,6 +6,7 @@ import {
   type RunWireOps,
   type SessionRef,
 } from "./run-handle";
+import type { DeepResearchEvent } from "./run-events";
 import type { RunLimits } from "./do-anything";
 import {
   isJsonObject,
@@ -20,7 +21,7 @@ export interface DeepResearchRunOptions {
   /** Delegation token — passed once here; the returned handle holds it. */
   token: string;
   /** The research topic. */
-  topic: string;
+  prompt: string;
   capture?: CaptureOptions;
   limits?: RunLimits;
   /**
@@ -196,15 +197,15 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
      * Start a research run. Pass `session: prior.sessionRef` to start a
      * follow-up run that inherits the prior run's context.
      */
-    run: async (input: DeepResearchRunOptions): Promise<RunHandle> => {
-      const { token, topic, capture, limits, session, ...rest } = input;
-      if (!topic) {
-        throw new EAKValidationError("deepResearch.run requires a topic");
+    run: async (input: DeepResearchRunOptions): Promise<RunHandle<DeepResearchEvent>> => {
+      const { token, prompt, capture, limits, session, ...rest } = input;
+      if (!prompt) {
+        throw new EAKValidationError("deepResearch.run requires a prompt");
       }
 
       const run = await api.run<{ run_id?: string; id?: string }>({
         token,
-        topic,
+        topic: prompt,
         ...rest,
         ...(limits?.maxDurationMinutes !== undefined
           ? { maxDurationMinutes: limits.maxDurationMinutes }
@@ -215,7 +216,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
       if (!runId) {
         throw new EAKValidationError("deepResearch run create did not return a run id");
       }
-      return new RunHandle(buildOps(token, runId), {
+      return new RunHandle<DeepResearchEvent>(buildOps(token, runId), {
         id: runId,
         sessionRef: session,
         capture,
@@ -223,8 +224,11 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
     },
 
     /** Reconnect to an existing run. Verifies the run exists before returning. */
-    attach: async (runId: string, opts: DeepResearchAttachOptions): Promise<RunHandle> => {
-      const handle = new RunHandle(buildOps(opts.token, runId), {
+    attach: async (
+      runId: string,
+      opts: DeepResearchAttachOptions,
+    ): Promise<RunHandle<DeepResearchEvent>> => {
+      const handle = new RunHandle<DeepResearchEvent>(buildOps(opts.token, runId), {
         id: runId,
         capture: opts.capture,
       });

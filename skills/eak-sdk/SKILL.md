@@ -61,7 +61,7 @@ const memory = await eak.gumem.recall({
 // run() returns a RunHandle; the token is held by the handle from here on.
 const run = await eak.doAnything.run({
   token,
-  instruction: "Open the target site and summarize product changes.",
+  prompt: "Open the target site and summarize product changes.",
   capture: { screenshots: true },
 });
 const result = await run.wait({
@@ -138,7 +138,7 @@ Use `delegateToken` output for runtime capability namespaces:
 ```ts
 const run = await eak.doAnything.run({
   token,
-  instruction: "Open https://example.com and summarize the page, then finish.",
+  prompt: "Open https://example.com and summarize the page, then finish.",
   capture: { screenshots: true },          // opt-in media; core events are always on
   limits: { maxDurationMinutes: 10 },
   // session: prior.sessionRef,            // reuse a session / DR follow-up run
@@ -171,15 +171,24 @@ const sameRun = await eak.doAnything.attach(run.id, { token, session: run.sessio
 `run.events()` is an `AsyncIterable<RunEvent>` that ends automatically at the terminal event and reconnects dropped streams internally (`Last-Event-ID` catch-up; tune with `sseMaxRetries`, default 5).
 
 ```ts
+import { EAKEventTypes } from "@eazo/eak";
+
 for await (const event of run.events()) {
-  event.type;       // "status" | "action" | "screenshot" | "inputRequest"
-                    //  | "message" | "cost" | "progress" | "completed" | "failed"
+  // event.type ∈ EAKEventTypes (curated): Progress | Message | InputRequired
+  //   | Screenshot | Done (core, any product) + ResultsReady (web search)
+  //   + Phase | SectionReady (deep research) + MonitorCreated | Triggered
+  //   | CheckCompleted (track). Each product handle is typed to its own subset.
+  //   Internal wire types fold into Progress; the raw wire string is event.raw.event.
+  //   event.data per type: simple events → the value itself (progress=string,
+  //   resultsReady=number, checkCompleted=boolean); rich events → a small
+  //   object (message={text,role}, done={output,succeeded,terminalReason}).
+  event.type;
   event.runId;
   event.at;         // ISO 8601
-  event.isTerminal; // completed / failed
+  event.isTerminal; // true only for Done
   event.data;       // flat camelCase payload, narrowed by type
   event.raw;        // original wire event (escape hatch)
-  if (event.type === "screenshot") {
+  if (event.type === EAKEventTypes.Screenshot) {
     event.image;    // { bytes: Uint8Array; mime; pageUrl?; step? } — data URI already decoded
   }
 }
@@ -192,7 +201,7 @@ for await (const event of run.events()) {
 
 ### Wire-level stream (escape hatch)
 
-`eak.doAnything.api.events({ token, sessionId, runId, signal?, lastEventId?, onlyTopLevel? })` yields raw `{ id?, event, data }` wire events: the type is lifted to `event.event` (match against `EAKEventTypes`), the payload is `event.data.data` (snake_case), and `event.data.task_id` identifies the run. `RUN_STATUS_CHANGED` payloads carry the new status in `.to` (NOT `.status`). Terminal detection is `event.event === EAKEventTypes.RUN_COMPLETED`. Wire shapes may evolve with the API.
+`eak.doAnything.api.events({ token, sessionId, runId, signal?, lastEventId?, onlyTopLevel? })` yields raw `{ id?, event, data }` wire events: the type is a raw string on `event.event` (e.g. `"run.status_changed"`), the payload is `event.data.data` (snake_case), and `event.data.task_id` identifies the run. `run.status_changed` payloads carry the new status in `.to` (NOT `.status`). Terminal detection is `event.event === "run.completed"`. Wire names are internal and may evolve — prefer the high-level `run.events()` + `event.type` instead.
 
 ## Do Anything Login Wall (human handoff)
 

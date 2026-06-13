@@ -130,7 +130,7 @@ const { token } = (
 
 const run = await eak.doAnything.run({
   token, // passed once — the handle holds it; handle methods never take a token
-  instruction: "Open the customer website and summarize recent product updates.",
+  prompt: "Open the customer website and summarize recent product updates.",
   capture: { screenshots: true },
 });
 
@@ -141,28 +141,51 @@ const result = await run.wait({
 console.log(result.output);
 ```
 
-`run()` returns a `RunHandle`. Core events (status, actions, input requests, completion) are always streamed; `capture: { screenshots: true }` opts into per-step screenshots, decoded to bytes for you. `wait()` drives the run to its terminal state and settles the result from the canonical run envelope (`result.raw` carries costs, step counts, and token usage).
+`run()` returns a `RunHandle` typed to the product (分型): `eak.deepResearch.run()` is a `RunHandle<DeepResearchEvent>`, so its events are narrowed to what Deep Research actually emits. `capture: { screenshots: true }` opts into per-step screenshots, decoded to bytes for you. `wait()` drives the run to its terminal state and settles the result (`result.raw` carries cost, step counts, token usage).
 
-For step-by-step control, consume the semantic event stream directly:
+> **Best practice — match `event.type` against the `EAKEventTypes` constants.**
+> Each product handle is typed to its own event set, so in TypeScript a case
+> for another product's event is a compile error and autocomplete shows only
+> the right ones. All the internal churn (supervisor planning, individual
+> clicks/keystrokes, telemetry) folds into `EAKEventTypes.Progress`; once you
+> match a `case`, `event.data` has a fixed shape (`progress` → `{ note }`,
+> `done` → `{ output, succeeded, terminalReason }`, …). The 45 raw wire types
+> are not exported.
 
 ```ts
-for await (const event of run.events()) {
-  // event.type: "status" | "action" | "screenshot" | "inputRequest"
-  //           | "message" | "cost" | "progress" | "completed" | "failed"
-  // event.runId / event.at / event.isTerminal / event.data (flat camelCase)
-  // event.raw — the original wire event, if you need it
-  if (event.type === "inputRequest") {
-    await openForUser(event.data.liveUrl);
-    await run.respond(String(event.data.requestId), "done — continue");
-    // run.respond(requestId) with no response skips the request instead
-  }
-}
-// The iterator ends automatically at the terminal event.
+import { EAKEventTypes } from "@eazo/eak";
 
+const run = await eak.deepResearch.run({ token, prompt: "…" }); // RunHandle<DeepResearchEvent>
+
+for await (const event of run.events()) {
+  switch (event.type) {
+    case EAKEventTypes.Progress:      console.log(event.data); break; // data IS the line (string)
+    case EAKEventTypes.Phase:         console.log(event.data); break; // data IS the phase name (string)
+    case EAKEventTypes.SectionReady:  console.log(event.data); break; // data IS the section title (string)
+    case EAKEventTypes.Message:       console.log(event.data.text); break; // rich → { text, role }
+    case EAKEventTypes.InputRequired:                                      // rich → { requestId, prompt, reason, liveUrl? }
+      await run.respond(event.data.requestId, "approve"); break;
+    case EAKEventTypes.Done:          console.log(event.data.output); break;  // rich → terminal
+    // case EAKEventTypes.ResultsReady — Web Search only → compile error here
+  }
+  // event.runId / event.at / event.isTerminal / event.raw (escape hatch)
+}
+// The iterator ends automatically at the terminal (EAKEventTypes.Done) event.
+```
+
+> **JS note:** the per-product compile-time narrowing is a TypeScript feature.
+> In plain JavaScript there's no type checking, so a wrong-product `case` just
+> never fires (it's not an error). Use TypeScript for the compile-time guard.
+
+Power users can match the exact internal wire type via `event.raw.event` (a
+raw string like `"run.action.started"`) — e.g. to tell a specific browser
+action apart inside `progress`. That's the escape hatch, not the everyday API.
+
+```ts
 await run.cancel("user stopped the task"); // idempotent — safe on a finished run
 const followUp = await eak.doAnything.run({
   token,
-  instruction: "Now check the pricing page too.",
+  prompt: "Now check the pricing page too.",
   session: run.sessionRef, // reuse the same browser session
 });
 const reattached = await eak.doAnything.attach(run.id, { token }); // re-attach by run id alone
@@ -326,7 +349,7 @@ const context = await eak.gumem.recall({
 ```ts
 const run = await eak.doAnything.run({
   token,
-  instruction: "Open the user's selected product page and summarize updates relevant to their current task.",
+  prompt: "Open the user's selected product page and summarize updates relevant to their current task.",
 });
 
 const status = await run.status(); // refresh the run's current state
@@ -338,7 +361,7 @@ await run.cancel("User stopped the task"); // idempotent
 ```ts
 const search = await eak.webSearch.run({
   token,
-  query: "product update notes relevant to the user's current task",
+  prompt: "product update notes relevant to the user's current task",
   maxResultsPerQuery: 5,
 });
 
@@ -351,7 +374,7 @@ console.log(result.output); // search results
 ```ts
 const research = await eak.deepResearch.run({
   token,
-  topic: "State of EU battery recycling, 2026 update",
+  prompt: "State of EU battery recycling, 2026 update",
   depth: "standard", // light | standard | deep — the main research knob
   limits: { maxDurationMinutes: 120 }, // wall-clock cap; the run self-terminates past it
 });
@@ -364,7 +387,7 @@ for (const artifact of report.artifacts) {
 // Follow-up research that inherits the prior run's context:
 const followUp = await eak.deepResearch.run({
   token,
-  topic: "Now compare against the 2025 numbers.",
+  prompt: "Now compare against the 2025 numbers.",
   session: research.sessionRef,
 });
 ```
@@ -374,9 +397,7 @@ const followUp = await eak.deepResearch.run({
 ```ts
 const monitor = await eak.track.create({
   token,
-  name: "Pricing page monitor",
-  target: "https://example.com/pricing",
-  schedule: "0 9 * * 1",
+  prompt: "Watch https://example.com/pricing and tell me when the price changes.",
 });
 
 await monitor.runNow();
@@ -468,7 +489,9 @@ await run.cancel(reason?)               // idempotent
 
 ### Wire-Level Escape Hatch
 
-The 1:1 low-level methods live under `eak.<product>.api.*` (e.g. `eak.doAnything.api.createSession`, `eak.deepResearch.api.followUp`, `eak.track.api.createMonitor`), together with `EAKEventTypes` and `event.raw` on semantic events. These mirror the backend HTTP contract directly — snake_case fields, double-envelope events, single-ID `/{product}/runs/{run_id}` addressing for run operations — and their shapes may evolve with the API. They are not part of the frozen public contract.
+The 1:1 low-level methods live under `eak.<product>.api.*` (e.g. `eak.doAnything.api.createSession`, `eak.deepResearch.api.followUp`, `eak.track.api.createMonitor`). These mirror the backend HTTP contract directly — snake_case fields, double-envelope events, single-ID `/{product}/runs/{run_id}` addressing for run operations — and their shapes may evolve with the API. They are not part of the frozen public contract.
+
+`event.raw.event` is the **raw wire event type** — an internal transport name (`run.action.started`, `run.section_completed`, …) whose naming is historical and inconsistent, exposed as a plain string. This is an implementation detail, not the product API: developers match on the curated `event.type` above. The full wire-type catalog is intentionally NOT exported — reach for `event.raw.event` (a string) only when you need an exact wire match the curated layer folds into `progress` (e.g. telling a specific browser action apart).
 
 Browser Use and Site Login scopes are reserved until their product runtime SDK methods are exported.
 
@@ -488,23 +511,39 @@ type EAKResponse<T> = {
 };
 ```
 
-Handle event streams (`run.events()`, `monitor.events()`) yield semantic `RunEvent` objects:
+Handle event streams (`run.events()`, `monitor.events()`) yield a discriminated
+`RunEvent` — once you match `event.type`, `event.data` is the fixed shape for
+that type:
 
 ```ts
-type RunEvent = {
-  type:
-    | "status" | "action" | "screenshot" | "inputRequest"
-    | "message" | "cost" | "progress" | "completed" | "failed";
-  runId: string;
-  at: string;          // ISO 8601
-  isTerminal: boolean; // true for completed / failed
-  data: JsonObject;    // flat, camelCase, narrowed by type
-  image?: { bytes: Uint8Array; mime: string; pageUrl?: string; step?: number }; // screenshot events
-  raw: EAKEvent;       // original wire event (escape hatch)
-};
+// event.type → event.data:
+//   SIMPLE events — event.data IS the value (no field to remember):
+//     "progress"       string   — a human-readable line of what's happening
+//     "phase"          string   — the Deep Research phase name
+//     "sectionReady"   string   — the Deep Research section title
+//     "resultsReady"   number   — Web Search count of unique results
+//     "monitorCreated" string   — Track monitor id
+//     "triggered"      string   — Track change summary
+//     "checkCompleted" boolean  — Track: did the scheduled check find a change
+//   RICH events — event.data is a small object:
+//     "message"        { text, role }
+//     "inputRequired"  { requestId, prompt, reason, liveUrl? }
+//     "screenshot"     { pageUrl?, step? }   + the decoded image on event.image
+//     "done"           { output, succeeded, terminalReason }
+// Common to every event: runId, at (ISO 8601), isTerminal (true only for "done"),
+// raw (the original wire event — escape hatch).
 ```
 
-Dropped connections reconnect automatically with `Last-Event-ID` catch-up; the iterator ends at the run's terminal event.
+Each product handle is typed to its own subset (分型):
+
+| Product | `event.type` set |
+|---|---|
+| Do Anything | core: `progress` / `message` / `inputRequired` / `screenshot` / `done` |
+| Web Search | core + `resultsReady` |
+| Deep Research | core + `phase` / `sectionReady` (the outline gate arrives as `inputRequired`) |
+| Track (`MonitorHandle`) | core + `monitorCreated` / `triggered` / `checkCompleted` |
+
+Dropped connections reconnect automatically with `Last-Event-ID` catch-up; the iterator ends at the run's terminal (`done`) event.
 
 Wire-level streaming methods (`eak.<product>.api.events`) return `AsyncIterable<EAKEvent<T>>`:
 
@@ -528,7 +567,7 @@ import {
 } from "@eazo/eak";
 
 try {
-  await eak.webSearch.run({ token, query: "EAK SDK" });
+  await eak.webSearch.run({ token, prompt: "EAK SDK" });
 } catch (error) {
   if (error instanceof EAKPermissionDeniedError) {
     // Request a new delegated token with the missing scope.

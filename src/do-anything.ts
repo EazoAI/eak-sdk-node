@@ -5,6 +5,7 @@ import {
   type RunWireOps,
   type SessionRef,
 } from "./run-handle";
+import type { DoAnythingEvent } from "./run-events";
 import {
   isJsonObject,
   type EAKEvent,
@@ -63,7 +64,8 @@ export interface RunLimits {
 export interface DoAnythingRunOptions {
   /** Delegation token — passed once here; the returned handle holds it. */
   token: string;
-  instruction: string;
+  /** Natural-language task for the agent to carry out. */
+  prompt: string;
   capture?: CaptureOptions;
   limits?: RunLimits;
   /**
@@ -272,10 +274,10 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
 
   return {
     /** Start a run. Returns a handle — see `RunHandle` for the run lifecycle. */
-    run: async (input: DoAnythingRunOptions): Promise<RunHandle> => {
-      const { token, instruction, capture, limits, session, ...rest } = input;
-      if (!instruction || typeof instruction !== "string") {
-        throw new EAKValidationError("doAnything.run requires an instruction string");
+    run: async (input: DoAnythingRunOptions): Promise<RunHandle<DoAnythingEvent>> => {
+      const { token, prompt, capture, limits, session, ...rest } = input;
+      if (!prompt || typeof prompt !== "string") {
+        throw new EAKValidationError("doAnything.run requires a prompt string");
       }
 
       // Fail loudly on options the wire create body cannot carry — a silent
@@ -294,7 +296,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
 
       const created = await api.createRun<{ run_id?: string; id?: string; session_id?: string }>({
         token,
-        instruction,
+        instructions: prompt,
         ...rest,
         ...(session?.sessionId ? { sessionId: session.sessionId } : {}),
         ...(limits?.maxDurationMinutes !== undefined
@@ -310,7 +312,7 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
           ? created.data.session_id
           : session?.sessionId;
 
-      return new RunHandle(buildOps(token, runId, capture), {
+      return new RunHandle<DoAnythingEvent>(buildOps(token, runId, capture), {
         id: runId,
         sessionRef: sessionId ? { sessionId } : undefined,
         capture,
@@ -322,9 +324,12 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
      * returning; `sessionRef` is adopted from the run detail envelope when
      * not supplied.
      */
-    attach: async (runId: string, opts: DoAnythingAttachOptions): Promise<RunHandle> => {
+    attach: async (
+      runId: string,
+      opts: DoAnythingAttachOptions,
+    ): Promise<RunHandle<DoAnythingEvent>> => {
       const sessionId = opts.session?.sessionId;
-      const handle = new RunHandle(buildOps(opts.token, runId, opts.capture), {
+      const handle = new RunHandle<DoAnythingEvent>(buildOps(opts.token, runId, opts.capture), {
         id: runId,
         sessionRef: sessionId ? { sessionId } : undefined,
         capture: opts.capture,
@@ -341,7 +346,6 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
 // (CreateDoAnythingRunRequest). Keys already in wire shape pass through.
 function normalizeDoAnythingRunInput(input: JsonObject): JsonObject {
   const body = renameKeys(input, {
-    instruction: "instructions",
     sessionId: "session_id",
     profileId: "profile_id",
     keepAlive: "keep_alive",

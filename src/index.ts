@@ -12,7 +12,9 @@ export {
   EAKValidationError,
 } from "./errors";
 export type { EAKErrorCode, EAKErrorOptions } from "./errors";
-export { EAKEventTypes } from "./events";
+// `EAKEventTypes` (the curated `event.type` values) is exported from
+// run-events.ts below. The raw 45-entry wire catalog (WireEventTypes) stays
+// internal (events.ts) — it backs the wire→curated mapping + drift tests.
 export { EAKProductScopes, EAKScopeBundles, EAKScopes } from "./scopes";
 export type { EAKProduct } from "./scopes";
 export { RunHandle } from "./run-handle";
@@ -25,7 +27,23 @@ export type {
   RunWaitOptions,
   SessionRef,
 } from "./run-handle";
-export type { RunEvent, RunEventType, RunImage } from "./run-events";
+export { EAKEventTypes } from "./run-events";
+export type {
+  EAKEventType,
+  RunEvent,
+  RunImage,
+  // Per-product event types (分型) — each product handle is typed to these.
+  CoreRunEvent,
+  DoAnythingEvent,
+  WebSearchEvent,
+  DeepResearchEvent,
+  MonitorEvent,
+  // Rich-event `event.data` object shapes (simple events' data is a scalar).
+  RunMessageData,
+  RunInputRequiredData,
+  RunScreenshotData,
+  RunDoneData,
+} from "./run-events";
 export { MonitorHandle } from "./track";
 export type {
   MonitorEventsOptions,

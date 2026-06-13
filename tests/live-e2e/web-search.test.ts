@@ -58,7 +58,7 @@ describeLiveE2E("live e2e: Web Search (semantic surface)", () => {
           // A real, evergreen query that search engines can always match.
           // Do NOT embed a nonce here: engines tokenize it into noise and
           // return 0 hits nondeterministically; traceability comes from run.id.
-          query: "EAK SDK quickstart guide",
+          prompt: "EAK SDK quickstart guide",
           maxResultsPerQuery: 1,
           siteWhitelist: SITE_WHITELIST,
         }),

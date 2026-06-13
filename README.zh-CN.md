@@ -125,7 +125,7 @@ const { token } = (
 
 const run = await eak.doAnything.run({
   token, // 入口传一次，句柄随后持有——句柄方法不再传 token
-  instruction: "打开客户官网并总结最近的产品变化。",
+  prompt: "打开客户官网并总结最近的产品变化。",
   capture: { screenshots: true },
 });
 
@@ -138,26 +138,33 @@ console.log(result.output);
 
 `run()` 返回一个 `RunHandle`。核心事件（状态、动作、输入请求、完成）始终默认推送；`capture: { screenshots: true }` 开启逐步截图，并且 SDK 已经把图片解码成字节。`wait()` 把任务跑到终态，并从权威 run envelope 结算结果（成本、步数、token 用量都在 `result.raw` 上）。
 
-需要逐步控制时，直接消费语义事件流：
+需要逐步控制时，直接消费事件流，`switch (event.type)` 用 `EAKEventTypes` 常量匹配。每个产品的 handle 按产品分型（`eak.deepResearch.run()` 出来是 `RunHandle<DeepResearchEvent>`），TS 里写错产品的事件会编译报错、补全只列本产品的。内部细节（supervisor 编排、子 agent 点击/输入、telemetry）统一折叠成 `EAKEventTypes.Progress`；匹配到 `case` 后 `event.data` 就是该类型的固定形状。45 个原始 wire 类型不导出。
 
 ```ts
+import { EAKEventTypes } from "@eazo/eak";
+
+const run = await eak.deepResearch.run({ token, prompt: "…" }); // RunHandle<DeepResearchEvent>
+
 for await (const event of run.events()) {
-  // event.type: "status" | "action" | "screenshot" | "inputRequest"
-  //           | "message" | "cost" | "progress" | "completed" | "failed"
-  // event.runId / event.at / event.isTerminal / event.data（平坦 camelCase）
-  // event.raw —— 原始 wire 事件（逃生舱）
-  if (event.type === "inputRequest") {
-    await openForUser(event.data.liveUrl);
-    await run.respond(String(event.data.requestId), "已处理，请继续");
-    // run.respond(requestId) 不传 response 即跳过该请求
+  switch (event.type) {
+    case EAKEventTypes.Progress:      console.log(event.data); break; // data 直接就是那句话(string)
+    case EAKEventTypes.Phase:         console.log(event.data); break; // data 直接就是阶段名(string)
+    case EAKEventTypes.SectionReady:  console.log(event.data); break; // data 直接就是章节标题(string)
+    case EAKEventTypes.Message:       console.log(event.data.text); break; // 丰富 → { text, role }
+    case EAKEventTypes.InputRequired:                                      // 丰富 → { requestId, prompt, reason, liveUrl? }
+      await run.respond(event.data.requestId, "approve"); break;
+    case EAKEventTypes.Done:          console.log(event.data.output); break; // 丰富 → 终态
+    // case EAKEventTypes.ResultsReady —— Web Search 才有，写这里 TS 编译报错
   }
+  // event.runId / event.at / event.isTerminal / event.raw（逃生舱）
 }
-// 迭代器在终态事件后自动结束。
+// 迭代器在终态（EAKEventTypes.Done）事件后自动结束。
+// 注:分型的编译期拦截是 TS 的能力;纯 JS 没类型检查,写错产品事件不报错、只是不触发。
 
 await run.cancel("用户停止任务"); // 幂等——对已结束的 run 调用也不会抛错
 const followUp = await eak.doAnything.run({
   token,
-  instruction: "再看一眼定价页。",
+  prompt: "再看一眼定价页。",
   session: run.sessionRef, // 复用同一个浏览器会话
 });
 const reattached = await eak.doAnything.attach(run.id, { token }); // 仅凭 run id 重连
@@ -323,7 +330,7 @@ const context = await eak.gumem.recall({
 ```ts
 const run = await eak.doAnything.run({
   token,
-  instruction: "打开用户选择的产品页面，总结和当前任务相关的更新。",
+  prompt: "打开用户选择的产品页面，总结和当前任务相关的更新。",
 });
 
 const status = await run.status(); // 刷新并返回当前状态
@@ -335,7 +342,7 @@ await run.cancel("用户停止任务"); // 幂等
 ```ts
 const search = await eak.webSearch.run({
   token,
-  query: "和用户当前任务相关的产品更新说明",
+  prompt: "和用户当前任务相关的产品更新说明",
   maxResultsPerQuery: 5,
 });
 
@@ -348,7 +355,7 @@ console.log(result.output); // 搜索结果
 ```ts
 const research = await eak.deepResearch.run({
   token,
-  topic: "欧盟电池回收行业 2026 年现状",
+  prompt: "欧盟电池回收行业 2026 年现状",
   depth: "standard", // light | standard | deep —— 调研深度，主要的旋钮
   limits: { maxDurationMinutes: 120 }, // 墙钟上限，跑超自动终止
 });
@@ -361,7 +368,7 @@ for (const artifact of report.artifacts) {
 // 追问：起一个继承前序上下文的新 run。
 const followUp = await eak.deepResearch.run({
   token,
-  topic: "再对比一下 2025 年的数据。",
+  prompt: "再对比一下 2025 年的数据。",
   session: research.sessionRef,
 });
 ```
@@ -371,9 +378,7 @@ const followUp = await eak.deepResearch.run({
 ```ts
 const monitor = await eak.track.create({
   token,
-  name: "竞品价格页监控",
-  target: "https://example.com/pricing",
-  schedule: "0 9 * * 1",
+  prompt: "盯着 https://example.com/pricing，价格有变动就通知我。",
 });
 
 await monitor.runNow();
@@ -465,7 +470,9 @@ await run.cancel(reason?)               // 幂等
 
 ### Wire 级逃生舱
 
-与后端 HTTP 契约一一对应的低层方法保留在 `eak.<product>.api.*` 下（如 `eak.doAnything.api.createSession`、`eak.deepResearch.api.followUp`、`eak.track.api.createMonitor`），配套 `EAKEventTypes` 常量和语义事件上的 `event.raw`。这些方法直接镜像 wire 形状——snake_case 字段、双层 envelope 事件、run 操作统一走 `/{product}/runs/{run_id}` 单 ID 寻址——形状会随 API 演进变化，不在冻结的公开契约范围内。
+与后端 HTTP 契约一一对应的低层方法保留在 `eak.<product>.api.*` 下（如 `eak.doAnything.api.createSession`、`eak.deepResearch.api.followUp`、`eak.track.api.createMonitor`）。这些方法直接镜像 wire 形状——snake_case 字段、双层 envelope 事件、run 操作统一走 `/{product}/runs/{run_id}` 单 ID 寻址——形状会随 API 演进变化，不在冻结的公开契约范围内。
+
+原始 wire 事件类型（`run.action.started` 这种内部传输名，命名是历史遗留、也不一致）**不作为公开导出**——开发者按上面那套精选 `event.type` 匹配即可；极少数要精确 wire 的场景，`event.raw.event` 是个原始字符串，直接比对。
 
 Browser Use、Site Login 的 scope 已预留，但产品运行时 SDK 方法导出前不作为公开方法说明。
 
@@ -485,21 +492,34 @@ type EAKResponse<T> = {
 };
 ```
 
-句柄事件流（`run.events()`、`monitor.events()`）产出语义化的 `RunEvent`：
+句柄事件流（`run.events()`、`monitor.events()`）产出判别联合 `RunEvent`——匹配 `event.type` 后 `event.data` 就是该类型的固定形状：
 
 ```ts
-type RunEvent = {
-  type:
-    | "status" | "action" | "screenshot" | "inputRequest"
-    | "message" | "cost" | "progress" | "completed" | "failed";
-  runId: string;
-  at: string;          // ISO 8601
-  isTerminal: boolean; // completed / failed 为 true
-  data: JsonObject;    // 平坦、camelCase、按 type 收窄
-  image?: { bytes: Uint8Array; mime: string; pageUrl?: string; step?: number }; // screenshot 事件
-  raw: EAKEvent;       // 原始 wire 事件（逃生舱）
-};
+// event.type → event.data：
+//   简单事件 —— event.data 直接就是那个值(不用记字段名):
+//     "progress"       string   —— 一句话进度
+//     "phase"          string   —— Deep Research 阶段名
+//     "sectionReady"   string   —— Deep Research 章节标题
+//     "resultsReady"   number   —— Web Search 结果数
+//     "monitorCreated" string   —— Track monitor id
+//     "triggered"      string   —— Track 变化摘要
+//     "checkCompleted" boolean  —— Track:这次检查有没有发现变化
+//   丰富事件 —— event.data 是个小对象:
+//     "message"        { text, role }
+//     "inputRequired"  { requestId, prompt, reason, liveUrl? }
+//     "screenshot"     { pageUrl?, step? }   + 解码后的图在 event.image
+//     "done"           { output, succeeded, terminalReason }
+// 公共字段:runId、at(ISO 8601)、isTerminal(仅 "done" 为 true)、raw(原始 wire 事件,逃生舱)。
 ```
+
+每个产品的 handle 只含自己那一套（分型）：
+
+| 产品 | `event.type` 集合 |
+|---|---|
+| Do Anything | 核心:`progress` / `message` / `inputRequired` / `screenshot` / `done` |
+| Web Search | 核心 + `resultsReady` |
+| Deep Research | 核心 + `phase` / `sectionReady`（大纲审批走 `inputRequired`） |
+| Track（`MonitorHandle`） | 核心 + `monitorCreated` / `triggered` / `checkCompleted` |
 
 断线会带 `Last-Event-ID` 自动重连续传；迭代器在终态事件后自动结束。
 
@@ -525,7 +545,7 @@ import {
 } from "@eazo/eak";
 
 try {
-  await eak.webSearch.run({ token, query: "EAK SDK" });
+  await eak.webSearch.run({ token, prompt: "EAK SDK" });
 } catch (error) {
   if (error instanceof EAKPermissionDeniedError) {
     // 重新申请包含缺失 scope 的 delegation token。

@@ -49,7 +49,7 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
           // (else ticks fall back to the legacy scrape path, which needs URLs).
           // Top-level keys are camelCase (the SDK snake-cases them); nested
           // values are wire-shaped passthrough.
-          intent: "Monitor the live Bitcoin price and notify on any change",
+          prompt: "Monitor the live Bitcoin price and notify on any change",
           notifyChannel: { kind: "console_inbox" },
           schedule: { kind: "interval", interval_seconds: 60 },
           extractionSchema: { btc_price_usd: "number" },
@@ -109,53 +109,69 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
   // gets persisted under .secrets/runs/track-<monitorId>/ (EAK_OUT_DIR
   // overrides).
   //
-  // This must witness a SCHEDULER-driven tick — runNow is a manual trigger and
-  // proves nothing about the schedule. So: tighten the interval to the backend
-  // minimum (60s), never call runNow here, and only accept a tick whose
-  // started_at falls after the recording began (replayed history and earlier
-  // manual ticks don't count).
-  it("records a scheduler-driven tick to disk via event.raw", async () => {
+  // This must witness the SCHEDULE actually RECURRING, not just "a tick fired".
+  // A single tick proves nothing about timing: an interval monitor's first tick
+  // typically fires immediately on (re)registration, so its started_at is also
+  // "after the recording began". The only thing that proves a timer cadence is
+  // the GAP between two consecutive scheduled ticks. So: tighten the interval to
+  // the backend minimum (60s), never call runNow, collect TWO fresh ticks (whose
+  // started_at falls after recording began — replayed history and earlier manual
+  // ticks don't count), and assert the inter-tick gap is ~interval, which is
+  // impossible to satisfy if ticks fired back-to-back instead of on a timer.
+  const INTERVAL_SECONDS = 60;
+  it("records a RECURRING scheduler-driven cadence to disk via event.raw", async () => {
     const monitor = await ensureMonitor();
     if (!monitor) return;
     await monitor.update({
       action: "refine",
       patch: {
-        schedule: { kind: "interval", interval_seconds: 60 },
+        schedule: { kind: "interval", interval_seconds: INTERVAL_SECONDS },
         trigger_dsl: { on: "change" },
       },
     });
 
     const recorder = openRawEventRecorder(`track-${monitor.id}`);
     const startedAfter = Date.now();
-    console.log(`recording monitor ${monitor.id} (waiting for a scheduled tick) → ${recorder.dir}`);
+    console.log(
+      `recording monitor ${monitor.id} (waiting for TWO scheduled ticks @ ${INTERVAL_SECONDS}s) → ${recorder.dir}`,
+    );
 
-    let freshTickN: number | undefined;
-    let sawScheduledTick = false;
+    // tickN -> started_at (ms) for every tick whose started_at is after we began
+    // recording. We need two of them to measure a real inter-tick interval.
+    const freshTickStartedAt = new Map<number, number>();
+    const completedFreshTicks: number[] = [];
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
-      Number(process.env.EAK_LIVE_TRACK_TICK_TIMEOUT_MS || 150_000),
+      // First fresh tick can arrive within seconds (immediate on re-register);
+      // the second only after a full interval. Budget ~3 intervals of headroom.
+      Number(process.env.EAK_LIVE_TRACK_TICK_TIMEOUT_MS || 220_000),
     );
     try {
       // Monitor streams have no terminal event — the caller decides when to
-      // stop. Tick payloads arrive camelCase on event.data (tickN, startedAt).
+      // stop. The tick wire events (monitor.tick_started/completed) aren't part
+      // of the curated MonitorEvent surface, so read their raw payload (snake_
+      // case) off event.raw.
       for await (const event of monitor.events({ signal: controller.signal })) {
         recorder.record(event);
         const wireType = String(event.raw.event || "");
+        const inner =
+          (event.raw.data as { data?: Record<string, unknown> } | undefined)?.data ?? {};
         if (wireType === "monitor.tick_started") {
-          const startedAt = Date.parse(String(event.data.startedAt ?? ""));
+          const startedAt = Date.parse(String(inner.started_at ?? ""));
           if (Number.isFinite(startedAt) && startedAt > startedAfter) {
-            freshTickN = Number(event.data.tickN);
+            freshTickStartedAt.set(Number(inner.tick_n), startedAt);
           }
         }
-        if (
-          wireType === "monitor.tick_completed" &&
-          freshTickN !== undefined &&
-          Number(event.data.tickN) === freshTickN
-        ) {
-          sawScheduledTick = true;
-          break;
+        if (wireType === "monitor.tick_completed") {
+          const tickN = Number(inner.tick_n);
+          if (freshTickStartedAt.has(tickN) && !completedFreshTicks.includes(tickN)) {
+            completedFreshTicks.push(tickN);
+          }
         }
+        // Stop once two distinct fresh ticks have completed — that's the minimum
+        // needed to measure one real scheduling interval.
+        if (completedFreshTicks.length >= 2) break;
       }
     } catch (error) {
       if (!controller.signal.aborted) throw error;
@@ -163,14 +179,29 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
       clearTimeout(timeout);
       controller.abort();
     }
+
+    // Two consecutive fresh ticks → the actual interval the scheduler waited.
+    const [firstTickN, secondTickN] = completedFreshTicks;
+    const gapSeconds =
+      completedFreshTicks.length >= 2
+        ? (freshTickStartedAt.get(secondTickN)! - freshTickStartedAt.get(firstTickN)!) / 1000
+        : undefined;
     console.log(
-      `recorded ${recorder.count()} events (scheduled tick ${
-        sawScheduledTick ? `#${freshTickN} completed` : "NOT seen"
-      }) → ${recorder.file}`,
+      `recorded ${recorder.count()} events; fresh ticks completed=[${completedFreshTicks.join(
+        ", ",
+      )}]${gapSeconds !== undefined ? `, gap=${gapSeconds.toFixed(1)}s` : ""} → ${recorder.file}`,
     );
-    expect(sawScheduledTick).toBe(true);
+
+    // Witnessed two scheduler-driven ticks (no runNow involved).
+    expect(completedFreshTicks.length).toBeGreaterThanOrEqual(2);
     expect(fs.existsSync(recorder.file)).toBe(true);
-  }, 180_000);
+    // The cadence assertion: the gap must be close to the configured interval.
+    // Lower bound is the real test — it's impossible to satisfy unless the timer
+    // genuinely waited an interval (an immediate / back-to-back tick gaps ~0s).
+    // Upper bound stays lenient: a slow tick run can push the next started_at out.
+    expect(gapSeconds).toBeGreaterThanOrEqual(INTERVAL_SECONDS * 0.75);
+    expect(gapSeconds).toBeLessThanOrEqual(INTERVAL_SECONDS * 3);
+  }, 260_000);
 
   it("monitor.runs() / monitor.run() expose tick runs read-only", async () => {
     const monitor = await ensureMonitor();

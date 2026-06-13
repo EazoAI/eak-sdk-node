@@ -49,7 +49,7 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
           // Plain researchable topic — no nonce: the topic fans out into real
           // web searches where a nonce only adds noise; run traceability
           // comes from run.id.
-          topic: "simply summarize the public example.com page in one paragraph",
+          prompt: "simply summarize the public example.com page in one paragraph",
           // "light" shrinks the outline section count and the per-section
           // gather budget — standard depth fans this trivial topic into a
           // multi-section plan that runs well past any sane test budget.

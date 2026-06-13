@@ -1,0 +1,134 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { WireEventTypes, WIRE_EVENT_TYPE_VALUES } from "../src/events";
+import { WIRE_TO_SEMANTIC, EAKEventTypes } from "../src/run-events";
+
+// Out-of-band wire types the normalizer handles outside WIRE_TO_SEMANTIC.
+const OUT_OF_BAND = new Set([
+  "stream.heartbeat", // → null
+  "run.screenshot", // → "screenshot"
+  "run.completed", // → "done"
+]);
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repo = join(here, "..");
+const catalog = JSON.parse(
+  readFileSync(join(repo, "src", "generated", "event-catalog.json"), "utf8"),
+) as { version: number; event_types: string[] };
+
+// ---------------------------------------------------------------------------
+// WireEventTypes (internal) is generated from the vendored catalog, a verbatim
+// copy of the backend's published artifact. These tests pin the SDK half of
+// the drift chain: catalog (vendored) ↔ WireEventTypes. The backend half
+// (catalog ↔ live EventType enum) is pinned by the backend's
+// test_catalog_export.py; the cross-repo half (vendored catalog ↔ live enum)
+// by the webagent-e2e contract suite.
+// ---------------------------------------------------------------------------
+
+describe("WireEventTypes ↔ vendored catalog", () => {
+  it("covers every catalog event type, in catalog order", () => {
+    expect([...WIRE_EVENT_TYPE_VALUES]).toEqual(catalog.event_types);
+  });
+
+  it("has no extra constants the catalog doesn't list", () => {
+    expect(new Set(Object.values(WireEventTypes))).toEqual(
+      new Set(catalog.event_types),
+    );
+  });
+
+  it("includes the families the old hand-copied subset dropped", () => {
+    // Regression guard: these were entirely missing before the generated
+    // catalog (web search + deep research families).
+    const v = new Set<string>(Object.values(WireEventTypes));
+    for (const wire of [
+      "search.progress",
+      "search.results_ready",
+      "search.summarize_progress",
+      "search.done",
+      "run.phase_changed",
+      "run.section_started",
+      "run.section_completed",
+      "run.crosscheck_done",
+      "run.synthesize_progress",
+      "run.monitor_created",
+    ]) {
+      expect(v.has(wire)).toBe(true);
+    }
+  });
+
+  it("every catalog wire type is explicitly classified (no silent default)", () => {
+    // The whole point of the rebuild: a backend event can't land in the
+    // generic "progress" bucket by accident. Each catalog entry is either in
+    // WIRE_TO_SEMANTIC or one of the three out-of-band cases.
+    const unclassified = catalog.event_types.filter(
+      (w) => !OUT_OF_BAND.has(w) && !(w in WIRE_TO_SEMANTIC),
+    );
+    expect(unclassified).toEqual([]);
+  });
+
+  it("WIRE_TO_SEMANTIC has no entries the catalog doesn't list", () => {
+    const stale = Object.keys(WIRE_TO_SEMANTIC).filter(
+      (w) => !catalog.event_types.includes(w),
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it("surfaces the curated headline types; folds internal churn to progress", () => {
+    // Headlines a developer reacts to:
+    expect(WIRE_TO_SEMANTIC["run.message"]).toBe("message");
+    expect(WIRE_TO_SEMANTIC["run.input_request"]).toBe("inputRequired");
+    expect(WIRE_TO_SEMANTIC["search.results_ready"]).toBe("resultsReady");
+    expect(WIRE_TO_SEMANTIC["run.phase_changed"]).toBe("phase");
+    expect(WIRE_TO_SEMANTIC["run.section_completed"]).toBe("sectionReady");
+    expect(WIRE_TO_SEMANTIC["run.monitor_created"]).toBe("monitorCreated");
+    // Internal supervisor / sub-agent churn folds into progress:
+    for (const wire of [
+      "run.action.started",
+      "run.action_result",
+      "run.plan_finalized",
+      "run.subtask_graded",
+      "run.section_started",
+      "run.crosscheck_done",
+      "run.browser_agent.observe",
+      "run.take_control_pending",
+      "run.status_changed",
+      "run.cost_update", // cost is on RunResult, not an event
+      "search.done", // run ends on run.completed
+      "run.recording_finalized",
+    ]) {
+      expect(WIRE_TO_SEMANTIC[wire]).toBe("progress");
+    }
+  });
+
+  it("EAKEventTypes constants are exactly the produced event.type values", () => {
+    // EAKEventTypes is the developer-facing vocabulary; it must cover precisely
+    // the set of event.type values the normalizer can emit: WIRE_TO_SEMANTIC
+    // values + out-of-band "screenshot"/"done" + the Track monitor-stream types
+    // (triggered/checkCompleted, produced by the monitor.* special cases).
+    const produced = new Set<string>([
+      ...Object.values(WIRE_TO_SEMANTIC),
+      "screenshot",
+      "done",
+      "triggered",
+      "checkCompleted",
+    ]);
+    expect(new Set(Object.values(EAKEventTypes))).toEqual(produced);
+    // no duplicate values
+    const vals = Object.values(EAKEventTypes);
+    expect(vals.length).toBe(new Set(vals).size);
+  });
+
+  it("generated file is up to date (pnpm gen:event-types)", () => {
+    // Fails loudly if someone re-synced the catalog but forgot to regen,
+    // or hand-edited the generated file.
+    expect(() =>
+      execFileSync("node", ["scripts/gen-event-types.mjs", "--check"], {
+        cwd: repo,
+        stdio: "pipe",
+      }),
+    ).not.toThrow();
+  });
+});

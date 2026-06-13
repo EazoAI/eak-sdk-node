@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   EAK,
-  EAKEventTypes,
   EAKPermissionDeniedError,
   EAKScopes,
   EAKScopeBundles,
   EazoAgentKit,
   buildStringToSign,
 } from "../src";
+// Raw wire-type catalog is internal (not a public export) — import via the
+// internal module for the wire-shape fixtures/assertions in this file.
+import { WireEventTypes } from "../src/events";
 import type { EAKOptions } from "../src";
 import * as sdk from "../src";
 
@@ -1128,7 +1130,7 @@ describe("EazoAgentKit", () => {
       EAKScopes.TRACK_READ,
       EAKScopes.TRACK_MANAGE,
     ]);
-    expect(EAKEventTypes.RUN_COMPLETED).toBe("run.completed");
+    expect(WireEventTypes.RUN_COMPLETED).toBe("run.completed");
   });
 
   it("uses canonical WebAgent scopes when exchanging delegation tokens", async () => {
@@ -1293,7 +1295,7 @@ describe("EazoAgentKit", () => {
 
     const run = await client.doAnything.run({
       token,
-      instruction: "open the docs",
+      prompt: "open the docs",
       capture: { screenshots: true },
     });
 
@@ -1306,7 +1308,7 @@ describe("EazoAgentKit", () => {
     expect(bodies[0]).toEqual({ instructions: "open the docs" });
   });
 
-  it("maps webSearch query sugar to the backend queries contract", async () => {
+  it("passes webSearch queries through to the backend contract", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const seen: { body?: unknown } = {};
     const client = new EazoAgentKit({
@@ -1322,7 +1324,7 @@ describe("EazoAgentKit", () => {
 
     await client.webSearch.api.run({
       token,
-      query: "EAK SDK",
+      queries: ["EAK SDK"],
       maxResultsPerQuery: 3,
       siteWhitelist: ["eazo.ai"],
     });
@@ -1395,8 +1397,8 @@ describe("EazoAgentKit", () => {
     }
 
     expect(events.map((e) => e.event)).toEqual([
-      EAKEventTypes.RUN_ACTION_STARTED,
-      EAKEventTypes.RUN_COMPLETED,
+      WireEventTypes.RUN_ACTION_STARTED,
+      WireEventTypes.RUN_COMPLETED,
     ]);
     // data stays the full envelope (type / task_id / data all reachable).
     expect((events[1].data as { type: string }).type).toBe("run.completed");
@@ -1459,8 +1461,8 @@ describe("EazoAgentKit", () => {
     expect(call).toBe(2); // reconnected once
     expect(lastEventIds).toEqual([undefined, "1"]); // resumed from last id
     expect(events.map((e) => e.event)).toEqual([
-      EAKEventTypes.RUN_ACTION_STARTED,
-      EAKEventTypes.RUN_COMPLETED,
+      WireEventTypes.RUN_ACTION_STARTED,
+      WireEventTypes.RUN_COMPLETED,
     ]);
   });
 
@@ -1539,7 +1541,7 @@ describe("EazoAgentKit", () => {
     }
 
     expect(call).toBe(3); // RST → reconnect(401) → reconnect(ok)
-    expect(events).toEqual([EAKEventTypes.RUN_ACTION_STARTED, EAKEventTypes.RUN_COMPLETED]);
+    expect(events).toEqual([WireEventTypes.RUN_ACTION_STARTED, WireEventTypes.RUN_COMPLETED]);
   });
 
   it("run().wait() drives a run to terminal and settles from the run-detail envelope", async () => {
@@ -1580,11 +1582,16 @@ describe("EazoAgentKit", () => {
 
     const run = await client.doAnything.run({
       token,
-      instruction: "open the page and read the title",
+      prompt: "open the page and read the title",
     });
     const result = await run.wait({
       onEvent: (event) => {
-        if (event.type === "action") actions.push(event.data.kind);
+        // Action steps fold into "progress"; the kind lives on the raw wire
+        // payload (not the curated event.data).
+        if (event.raw.event === "run.action.started") {
+          const inner = (event.raw.data as { data?: { kind?: unknown } } | undefined)?.data;
+          if (inner?.kind !== undefined) actions.push(inner.kind);
+        }
       },
     });
 
@@ -1726,7 +1733,7 @@ describe("EazoAgentKit", () => {
     expect(seen.body).toEqual({ user_id: "user_1", session_id: "default" });
   });
 
-  it("maps instruction sugar to the backend DoAnything instructions contract", async () => {
+  it("snakeifies camelCase fields on the DoAnything escape-hatch create", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const seen: { body?: unknown } = {};
     const client = new EazoAgentKit({
@@ -1743,7 +1750,7 @@ describe("EazoAgentKit", () => {
     await client.doAnything.api.createRun({
       token,
       sessionId: "sess_1",
-      instruction: "open the site",
+      instructions: "open the site",
     });
 
     // `sessionId` is a body field on the single-ID create (follow-up mode).

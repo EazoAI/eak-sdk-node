@@ -173,7 +173,7 @@ describe("doAnything.run → RunHandle", () => {
 
     const run = await client.doAnything.run({
       token: TOKEN,
-      instruction: "open the docs",
+      prompt: "open the docs",
       profileId: "profile_1",
       limits: { maxDurationMinutes: 7 },
       capture: { screenshots: true },
@@ -202,13 +202,13 @@ describe("doAnything.run → RunHandle", () => {
       return jsonResponse({ data: { run_id: "run_1", session_id: "sess_1" } });
     });
 
-    const withoutCapture = await client.doAnything.run({ token: TOKEN, instruction: "go" });
+    const withoutCapture = await client.doAnything.run({ token: TOKEN, prompt: "go" });
     for await (const event of withoutCapture.events()) void event;
     expect(calls.at(-1)?.url).toContain("include_screenshots=false");
 
     const withCapture = await client.doAnything.run({
       token: TOKEN,
-      instruction: "go",
+      prompt: "go",
       capture: { screenshots: true },
     });
     for await (const event of withCapture.events()) void event;
@@ -222,7 +222,7 @@ describe("doAnything.run → RunHandle", () => {
 
     const run = await client.doAnything.run({
       token: TOKEN,
-      instruction: "follow up",
+      prompt: "follow up",
       session: { sessionId: "sess_prior" },
     });
 
@@ -243,7 +243,7 @@ describe("doAnything.run → RunHandle", () => {
       { callbackUrl: "https://app.example.com/hook" },
     ]) {
       await expect(
-        client.doAnything.run({ token: TOKEN, instruction: "go", ...options }),
+        client.doAnything.run({ token: TOKEN, prompt: "go", ...options }),
       ).rejects.toBeInstanceOf(EAKValidationError);
     }
     expect(calls).toHaveLength(0); // rejected locally — nothing was silently dropped
@@ -265,26 +265,28 @@ describe("doAnything.run → RunHandle", () => {
       return jsonResponse({ data: { run_id: "run_1", session_id: "sess_1" } });
     });
 
-    const run = await client.doAnything.run({ token: TOKEN, instruction: "go" });
+    const run = await client.doAnything.run({ token: TOKEN, prompt: "go" });
     const events: RunEvent[] = [];
     for await (const event of run.events()) events.push(event);
 
     expect(events.map((e) => e.type)).toEqual([
-      "status",
-      "action",
-      "cost",
-      "progress", // unmapped wire types surface as progress, never drop
-      "completed",
+      "progress", // run.status_changed → note = status ("running")
+      "progress", // run.action.started → note = kind ("navigate")
+      // run.cost_update + run.take_control_pending → empty note → DROPPED
+      "done", // run.completed → single terminal "done"
     ]);
-    expect(events.map((e) => e.isTerminal)).toEqual([false, false, false, false, true]);
-    expect(events[1].data).toEqual({ kind: "navigate", targetUrl: "https://x.dev" });
+    expect(events.map((e) => e.isTerminal)).toEqual([false, false, true]);
+    // action.started folds to progress; data IS the line — here the action kind.
+    expect(events[1].data).toBe("navigate");
     expect(events[1].runId).toBe("run_1");
     expect(events[1].at).toBe("2026-06-12T08:00:02+00:00");
     // Raw escape hatch keeps the wire envelope intact.
     expect((events[1].raw.data as { data: { target_url: string } }).data.target_url).toBe(
       "https://x.dev",
     );
-    expect(events[4].data.terminalReason).toBe("done");
+    const terminal = events[2];
+    expect(terminal.type).toBe("done");
+    if (terminal.type === "done") expect(terminal.data.terminalReason).toBe("done");
   });
 
   it("decodes screenshot data URIs into event.image and filters them without capture", async () => {
@@ -301,7 +303,7 @@ describe("doAnything.run → RunHandle", () => {
 
     const withCapture = await client.doAnything.run({
       token: TOKEN,
-      instruction: "go",
+      prompt: "go",
       capture: { screenshots: true },
     });
     const seen: RunEvent[] = [];
@@ -313,29 +315,58 @@ describe("doAnything.run → RunHandle", () => {
     expect(seen[0].image.pageUrl).toBe("https://x.dev/page");
     expect(seen[0].image.step).toBe(3);
 
-    const withoutCapture = await client.doAnything.run({ token: TOKEN, instruction: "go" });
+    const withoutCapture = await client.doAnything.run({ token: TOKEN, prompt: "go" });
     const types: string[] = [];
     for await (const event of withoutCapture.events()) types.push(event.type);
-    expect(types).toEqual(["completed"]); // screenshot filtered out
+    expect(types).toEqual(["done"]); // screenshot filtered out
+  });
+
+  it("folds internal events into progress; surfaces headline types + done", async () => {
+    const { client } = makeClient((call) => {
+      if (call.pathname.endsWith("/events")) {
+        return sseResponse(
+          frame(1, "run.phase_changed", { to_phase: "gather" }) + // → phase
+            frame(2, "run.section_completed", { title: "intro" }) + // → sectionReady
+            frame(3, "search.results_ready", { total_unique_results: 3 }) + // → resultsReady
+            frame(4, "run.completed", { terminal_reason: "done", output: "ok" }),
+        );
+      }
+      return jsonResponse({ data: { run_id: "run_1" } });
+    });
+
+    const run = await client.deepResearch.run({ token: TOKEN, prompt: "x" });
+    const events: RunEvent[] = [];
+    let doneOutput: unknown;
+    await run.wait({
+      onEvent: (e) => {
+        events.push(e);
+        if (e.type === "done") doneOutput = e.data.output;
+      },
+    });
+    expect(events.map((e) => e.type)).toEqual(["phase", "sectionReady", "resultsReady", "done"]);
+    expect(doneOutput).toBe("ok");
   });
 
   it("demotes sub-run terminal events to progress so they never end the stream", async () => {
     const { client } = makeClient((call) => {
       if (call.pathname.endsWith("/events")) {
         return sseResponse(
-          frame(1, "run.completed", { terminal_reason: "done" }, { task_id: "sub_1" }) +
+          // `summary` gives the demoted sub-run progress a non-empty note so it
+          // survives the empty-progress filter (proving it became progress, not
+          // a terminal that ends the stream).
+          frame(1, "run.completed", { terminal_reason: "done", summary: "sub done" }, { task_id: "sub_1" }) +
             frame(2, "run.completed", { terminal_reason: "done" }, { task_id: "run_1" }),
         );
       }
       return jsonResponse({ data: { run_id: "run_1" } });
     });
 
-    const run = await client.doAnything.run({ token: TOKEN, instruction: "go" });
+    const run = await client.doAnything.run({ token: TOKEN, prompt: "go" });
     const events: RunEvent[] = [];
     for await (const event of run.events()) events.push(event);
     expect(events.map((e) => [e.type, e.runId])).toEqual([
       ["progress", "sub_1"],
-      ["completed", "run_1"],
+      ["done", "run_1"],
     ]);
   });
 
@@ -364,7 +395,7 @@ describe("doAnything.run → RunHandle", () => {
 
     const run = await client.doAnything.run({
       token: TOKEN,
-      instruction: "go",
+      prompt: "go",
       capture: { screenshots: true },
     });
     const shots: Array<{ index: number; bytes: number }> = [];
@@ -379,7 +410,9 @@ describe("doAnything.run → RunHandle", () => {
     });
 
     expect(shots).toEqual([{ index: 0, bytes: IMAGE_BYTES.length }]);
-    expect(requests).toEqual([{ requestId: "req_1", liveUrl: "https://live" }]);
+    expect(requests).toEqual([
+      { requestId: "req_1", reason: "", prompt: "", liveUrl: "https://live" },
+    ]);
     expect(result.status).toBe("succeeded");
     expect(result.output).toBe("the full answer"); // settled from detail, not the lean event
     expect(result.artifacts).toEqual([]);
@@ -417,11 +450,11 @@ describe("doAnything.run → RunHandle", () => {
       return jsonResponse({ data: { run_id: "run_1" } });
     });
 
-    const run = await client.doAnything.run({ token: TOKEN, instruction: "go" });
+    const run = await client.doAnything.run({ token: TOKEN, prompt: "go" });
     const types: string[] = [];
     for await (const event of run.events()) types.push(event.type);
 
-    expect(types).toEqual(["action", "completed"]);
+    expect(types).toEqual(["progress", "done"]); // action.started folds to progress
     expect(eventsCall).toBe(2);
     expect(lastEventIds).toEqual([undefined, "1"]); // resumed where we left off
   });
@@ -442,7 +475,7 @@ describe("doAnything.run → RunHandle", () => {
       return jsonResponse({ data: { run_id: "run_1" } });
     });
 
-    const run = await client.doAnything.run({ token: TOKEN, instruction: "go" });
+    const run = await client.doAnything.run({ token: TOKEN, prompt: "go" });
     const status = await run.cancel("no longer needed");
     expect(status.status).toBe("succeeded");
   });
@@ -458,7 +491,7 @@ describe("doAnything.run → RunHandle", () => {
       return jsonResponse({ data: { run_id: "run_1" } });
     });
 
-    const run = await client.doAnything.run({ token: TOKEN, instruction: "go" });
+    const run = await client.doAnything.run({ token: TOKEN, prompt: "go" });
     await expect(run.cancel()).rejects.toBeInstanceOf(EAKPermissionDeniedError);
   });
 
@@ -472,7 +505,7 @@ describe("doAnything.run → RunHandle", () => {
       return jsonResponse({ data: { run_id: "run_1" } });
     });
 
-    const run = await client.doAnything.run({ token: TOKEN, instruction: "go" });
+    const run = await client.doAnything.run({ token: TOKEN, prompt: "go" });
     await run.respond("req_1", "use the blue button");
     await run.respond("req_2"); // no response = skip
 
@@ -511,7 +544,7 @@ describe("webSearch.run → RunHandle", () => {
   it("maps query sugar to queries and returns a handle", async () => {
     const { client, calls } = makeClient(() => jsonResponse({ data: { run_id: "ws_1" } }));
 
-    const run = await client.webSearch.run({ token: TOKEN, query: "eak sdk" });
+    const run = await client.webSearch.run({ token: TOKEN, prompt: "eak sdk" });
     expect(run.id).toBe("ws_1");
     expect(calls[0].body).toEqual({ queries: ["eak sdk"] });
   });
@@ -526,7 +559,7 @@ describe("webSearch.run → RunHandle", () => {
 
   it("respond() fails loudly — the wire has no webSearch intervene", async () => {
     const { client, calls } = makeClient(() => jsonResponse({ data: { run_id: "ws_1" } }));
-    const run = await client.webSearch.run({ token: TOKEN, query: "x" });
+    const run = await client.webSearch.run({ token: TOKEN, prompt: "x" });
     const before = calls.length;
     await expect(run.respond("req_1", "answer")).rejects.toBeInstanceOf(EAKError);
     expect(calls.length).toBe(before); // failed locally
@@ -543,7 +576,7 @@ describe("deepResearch.run → RunHandle", () => {
 
     const run = await client.deepResearch.run({
       token: TOKEN,
-      topic: "battery recycling, 2026 update",
+      prompt: "battery recycling, 2026 update",
       limits: { maxDurationMinutes: 120 },
       session: { sessionId: "sess_dr" }, // follow-up run in an existing session
     });
@@ -560,7 +593,7 @@ describe("deepResearch.run → RunHandle", () => {
   it("respond() fails loudly — deepResearch has no interactive gate", async () => {
     const { client, calls } = makeClient(() => jsonResponse({ data: { run_id: "dr_1" } }));
 
-    const run = await client.deepResearch.run({ token: TOKEN, topic: "t" });
+    const run = await client.deepResearch.run({ token: TOKEN, prompt: "t" });
     const before = calls.length;
     await expect(run.respond("req_1", "approve")).rejects.toBeInstanceOf(EAKValidationError);
     expect(calls.length).toBe(before); // no /intervene call — there is no gate to answer
@@ -601,7 +634,7 @@ describe("deepResearch.run → RunHandle", () => {
       return jsonResponse({ data: { run_id: "dr_1" } });
     });
 
-    const run = await client.deepResearch.run({ token: TOKEN, topic: "t" });
+    const run = await client.deepResearch.run({ token: TOKEN, prompt: "t" });
     const result = await run.wait();
 
     expect(result.status).toBe("succeeded");
@@ -661,11 +694,13 @@ describe("track.create → MonitorHandle", () => {
     const { client, calls } = monitorClient();
     const monitor = await client.track.create({
       token: TOKEN,
+      prompt: "monitor the pricing page for changes",
       url: "https://eazo.ai/pricing",
       checkIntervalMinutes: 30,
     });
     expect(monitor.id).toBe("mon_1");
     expect(calls[0].body).toEqual({
+      intent: "monitor the pricing page for changes",
       url: "https://eazo.ai/pricing",
       check_interval_minutes: 30,
     });
@@ -673,7 +708,11 @@ describe("track.create → MonitorHandle", () => {
 
   it("handle methods address the monitor without re-passing token or id", async () => {
     const { client, calls } = monitorClient();
-    const monitor = await client.track.create({ token: TOKEN, url: "https://eazo.ai" });
+    const monitor = await client.track.create({
+      token: TOKEN,
+      prompt: "monitor the page for changes",
+      url: "https://eazo.ai",
+    });
 
     const detail = await monitor.get();
     expect(detail.checkIntervalMinutes).toBe(30); // camelCase normalization
@@ -693,7 +732,11 @@ describe("track.create → MonitorHandle", () => {
 
   it("respond() maps to the monitor intervene wire with answer/skip kinds", async () => {
     const { client, calls } = monitorClient();
-    const monitor = await client.track.create({ token: TOKEN, url: "https://eazo.ai" });
+    const monitor = await client.track.create({
+      token: TOKEN,
+      prompt: "monitor the page for changes",
+      url: "https://eazo.ai",
+    });
 
     await monitor.respond("req_1", "logged back in");
     await monitor.respond("req_2");
@@ -707,7 +750,11 @@ describe("track.create → MonitorHandle", () => {
 
   it("runs() / run() expose read-only normalized tick runs", async () => {
     const { client, calls } = monitorClient();
-    const monitor = await client.track.create({ token: TOKEN, url: "https://eazo.ai" });
+    const monitor = await client.track.create({
+      token: TOKEN,
+      prompt: "monitor the page for changes",
+      url: "https://eazo.ai",
+    });
 
     const runs = await monitor.runs({ limit: 5 });
     expect(runs).toEqual([
@@ -723,13 +770,18 @@ describe("track.create → MonitorHandle", () => {
 
   it("events() yields normalized events without auto-ending on tick run terminals", async () => {
     const { client } = monitorClient();
-    const monitor = await client.track.create({ token: TOKEN, url: "https://eazo.ai" });
+    const monitor = await client.track.create({
+      token: TOKEN,
+      prompt: "monitor the page for changes",
+      url: "https://eazo.ai",
+    });
 
     const types: string[] = [];
     for await (const event of monitor.events()) types.push(event.type);
-    // The terminal `completed` of a tick run is yielded, and the iterator only
+    // The terminal `done` of a tick run is yielded, and the iterator only
     // ends because the mocked stream closes — not because of the terminal.
-    expect(types).toEqual(["status", "completed"]);
+    // (status_changed folds into progress.)
+    expect(types).toEqual(["progress", "done"]);
   });
 
   it("attach() verifies the monitor exists", async () => {

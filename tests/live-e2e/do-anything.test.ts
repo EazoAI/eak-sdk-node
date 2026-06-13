@@ -57,7 +57,7 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
           // URL-fetch phrasings get routed to the fetch/textify agents, which
           // never produce screenshots. The answer is still deterministic —
           // the article's exact title.
-          instruction:
+          prompt:
             "Open https://en.wikipedia.org in the browser, use the site search to find " +
             "the article about the UUID standard, open it, and report the article's exact title.",
           capture: { screenshots: true },

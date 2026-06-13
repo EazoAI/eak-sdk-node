@@ -4,6 +4,7 @@ import {
   normalizeRunEvent,
   type RunEvent,
   type RunImage,
+  type RunInputRequiredData,
 } from "./run-events";
 import { isJsonObject, type EAKEvent, type JsonObject } from "./types";
 
@@ -63,7 +64,8 @@ export interface RunWaitOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   onEvent?: (event: RunEvent) => void | Promise<void>;
-  onInputRequest?: (request: JsonObject, event: RunEvent) => void | Promise<void>;
+  /** Fires on `event.type === "inputRequired"` (HITL). Respond via `run.respond()`. */
+  onInputRequest?: (request: RunInputRequiredData, event: RunEvent) => void | Promise<void>;
   onScreenshot?: (image: RunImage, index: number) => void | Promise<void>;
 }
 
@@ -88,11 +90,13 @@ export interface RunWireOps {
 const CANCEL_IDEMPOTENT_STATUSES = new Set([400, 404, 409, 410, 422]);
 
 /**
- * Handle to a single run — identical shape across doAnything / webSearch /
- * deepResearch. Holds the delegation token and run addressing internally;
- * no method takes a token or an id.
+ * Handle to a single run. Generic over the product's event set (分型): a
+ * `RunHandle<DeepResearchEvent>` only ever yields Deep Research events, so
+ * `switch (event.type)` autocompletes just that product's events and a
+ * wrong-product case is a compile error. The runtime is identical across
+ * products; the generic only narrows the public type surface.
  */
-export class RunHandle {
+export class RunHandle<E extends RunEvent = RunEvent> {
   readonly id: string;
   /** Pass back to `run({ session })` to reuse the same backend session. */
   sessionRef?: SessionRef;
@@ -118,13 +122,15 @@ export class RunHandle {
    * Stream semantic events. Ends automatically at the run's terminal event.
    * Reconnects with `Last-Event-ID` catch-up are handled internally.
    */
-  async *events(opts: RunEventsOptions = {}): AsyncIterable<RunEvent> {
+  async *events(opts: RunEventsOptions = {}): AsyncIterable<E> {
     for await (const wire of this.ops.streamEvents(opts)) {
       const event = normalizeRunEvent(wire, { topRunId: this.id });
       if (!event) continue;
       if (event.type === "screenshot" && !this.capture.screenshots) continue;
       if (isVideoFrame(wire) && !this.capture.videoFrames) continue;
-      yield event;
+      // The normalizer yields the full RunEvent union; this product handle only
+      // receives its own subset, so the narrowing cast is sound.
+      yield event as E;
       if (event.isTerminal) return;
     }
   }
@@ -145,11 +151,15 @@ export class RunHandle {
           await opts.onEvent?.(event);
           if (event.type === "screenshot") {
             await opts.onScreenshot?.(event.image, screenshotIndex++);
-          } else if (event.type === "inputRequest") {
+          } else if (event.type === "inputRequired") {
             await opts.onInputRequest?.(event.data, event);
           }
           if (event.isTerminal) {
-            terminalPayload = event.data;
+            // Fallback only (used if the canonical getDetail() read below
+            // fails): the raw wire envelope, not the trimmed `done` data.
+            terminalPayload = isJsonObject(event.raw.data)
+              ? (event.raw.data as JsonObject)
+              : undefined;
             break settled;
           }
         }

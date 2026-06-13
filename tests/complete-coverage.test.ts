@@ -99,7 +99,7 @@ function createHarness() {
 
     if (url.pathname.endsWith("/events")) {
       return sseResponse(
-        'id: evt_1\nevent: run.started\ndata: {"type":"run.started","task_id":"run_matrix","data":{"ok":true}}\n\n',
+        'id: evt_1\nevent: run.message\ndata: {"type":"run.message","task_id":"run_matrix","data":{"text":"hi","role":"ai"}}\n\n',
       );
     }
 
@@ -519,13 +519,13 @@ describe("complete public method coverage matrix", () => {
 
   describe("webSearch/doAnything/track/deepResearch", () => {
     describe("webSearch.run/get/events/cancel", () => {
-      it("covers run sugar and all follow-up methods", async () => {
+      it("covers escape-hatch run and all follow-up methods", async () => {
         const h = createHarness();
         const token = delegationToken();
 
         await h.client.webSearch.api.run({
           token,
-          query: "eak sdk",
+          queries: ["eak sdk"],
           maxResultsPerQuery: 5,
           siteWhitelist: ["eazo.ai"],
           siteBlacklist: ["example.net"],
@@ -571,7 +571,7 @@ describe("complete public method coverage matrix", () => {
 
         const handle = await h.client.doAnything.run({
           token,
-          instruction: "open eazo.ai",
+          prompt: "open eazo.ai",
           profileId: "profile_matrix",
           keepAlive: true,
           allowedActions: ["navigate"],

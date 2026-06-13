@@ -1,5 +1,5 @@
 import { EAKValidationError } from "./errors";
-import { camelizeRecord, normalizeRunEvent, type RunEvent } from "./run-events";
+import { camelizeRecord, normalizeRunEvent, type MonitorEvent } from "./run-events";
 import {
   isJsonObject,
   type EAKEvent,
@@ -12,7 +12,9 @@ import {
 export interface TrackCreateOptions {
   /** Delegation token — passed once here; the returned handle holds it. */
   token: string;
-  /** Monitor definition (url, instructions, schedule, …) — camelCase keys. */
+  /** Natural-language description of what to monitor. */
+  prompt: string;
+  /** Rest of the monitor definition (url, schedule, …) — camelCase keys. */
   [key: string]: unknown;
 }
 
@@ -72,10 +74,12 @@ export class MonitorHandle {
    * Stream semantic monitor events. Monitors are resident, so the stream has
    * no terminal event — it ends only when closed by the caller or the server.
    */
-  async *events(opts: MonitorEventsOptions = {}): AsyncIterable<RunEvent> {
+  async *events(opts: MonitorEventsOptions = {}): AsyncIterable<MonitorEvent> {
     for await (const wire of this.ops.streamEvents(opts)) {
       const event = normalizeRunEvent(wire);
-      if (event) yield event;
+      // The monitor stream only carries core + Track events; the cast narrows
+      // the full RunEvent union to that subset.
+      if (event) yield event as MonitorEvent;
     }
   }
 
@@ -255,9 +259,13 @@ export function createTrackNamespace(transport: EAKTransport) {
   return {
     /** Create a monitor. Returns a handle — see `MonitorHandle`. */
     create: async (input: TrackCreateOptions): Promise<MonitorHandle> => {
-      const { token, ...rest } = input;
+      const { token, prompt, ...rest } = input;
+      if (!prompt || typeof prompt !== "string") {
+        throw new EAKValidationError("track.create requires a prompt string");
+      }
       const created = await api.createMonitor<{ id?: string; monitor_id?: string }>({
         token,
+        intent: prompt,
         ...snakeifyKeys(rest),
       });
       const monitorId = created.data.id || created.data.monitor_id;

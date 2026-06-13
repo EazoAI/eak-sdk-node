@@ -40,4 +40,10 @@ describe("built package surface", () => {
     }
     expect(cjs.EAK).toBe(cjs.EazoAgentKit);
   });
+
+  it("does NOT export the raw internal wire-type catalog (developers use EAKEventTypes / event.type)", async () => {
+    const esm = await import("../dist/index.js");
+    expect(esm).not.toHaveProperty("WireEventTypes");
+    expect(esm).not.toHaveProperty("WIRE_EVENT_TYPE_VALUES");
+  });
 });
