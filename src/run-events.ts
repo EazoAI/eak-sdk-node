@@ -27,7 +27,7 @@ import { isJsonObject, type EAKEvent, type JsonObject } from "./types";
  */
 export const EAKEventTypes = {
   // --- Core (any product run can emit these) ---
-  /** The agent is working — folds ALL internal steps (actions, plan/subtask, sections, telemetry, take-control, …); `data.note` is a best-effort human-readable line. */
+  /** The agent is working — folds ALL internal steps (actions, plan/subtask, sections, telemetry, take-control, …); `event.data` is a best-effort human-readable line (string). */
   Progress: "progress",
   /** The agent produced a user-facing chat message. */
   Message: "message",
@@ -38,7 +38,7 @@ export const EAKEventTypes = {
   /** Terminal — the run finished; outcome + output in `event.data` (cost is on the `RunResult`). */
   Done: "done",
   // --- Web Search ---
-  /** Web Search results are ready; `data.count` (the list is in `done.output`). */
+  /** Web Search results are ready; `event.data` is the count (the list is in `done.output`). */
   ResultsReady: "resultsReady",
   // --- Deep Research ---
   /** Deep Research coarse phase changed (brief → gather → synthesize …). */
@@ -50,7 +50,7 @@ export const EAKEventTypes = {
   MonitorCreated: "monitorCreated",
   /** A monitor detected a change worth acting on (the Track signal you react to). */
   Triggered: "triggered",
-  /** A monitor's scheduled check finished (`data.changed` says whether it found anything). */
+  /** A monitor's scheduled check finished (`event.data` is whether it found a change). */
   CheckCompleted: "checkCompleted",
 } as const;
 

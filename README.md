@@ -148,9 +148,10 @@ console.log(result.output);
 > for another product's event is a compile error and autocomplete shows only
 > the right ones. All the internal churn (supervisor planning, individual
 > clicks/keystrokes, telemetry) folds into `EAKEventTypes.Progress`; once you
-> match a `case`, `event.data` has a fixed shape (`progress` → `{ note }`,
-> `done` → `{ output, succeeded, terminalReason }`, …). The 45 raw wire types
-> are not exported.
+> match a `case`, `event.data` has a fixed shape — a bare value for simple
+> events (`progress` → a string line, `resultsReady` → a number) and a small
+> object for rich ones (`done` → `{ output, succeeded, terminalReason }`). The
+> 45 raw wire types are not exported.
 
 ```ts
 import { EAKEventTypes } from "@eazo/eak";
