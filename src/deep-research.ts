@@ -19,9 +19,8 @@ import {
 export interface DeepResearchRunOptions {
   /** Delegation token — passed once here; the returned handle holds it. */
   token: string;
-  /** The research topic. `instruction` is accepted as an alias. */
-  topic?: string;
-  instruction?: string;
+  /** The research topic. */
+  topic: string;
   capture?: CaptureOptions;
   limits?: RunLimits;
   /**
@@ -33,7 +32,6 @@ export interface DeepResearchRunOptions {
   depth?: "light" | "standard" | "deep";
   outputFormat?: string;
   targetAudience?: string;
-  requireOutlineApproval?: boolean;
   domainWhitelist?: string[];
   domainBlacklist?: string[];
   [key: string]: unknown;
@@ -84,19 +82,6 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
           lastEventId: input.lastEventId,
           requiredScopes: ["webagent.deep_research:read"],
           signal: input.signal,
-        },
-      ),
-
-    intervene: <T = unknown>(
-      input: RuntimeTokenInput & { runId: string; requestId: string; response: unknown },
-    ): Promise<EAKResponse<T>> =>
-      transport.webAgentJson(
-        "POST",
-        `/deep_research/runs/${encodeURIComponent(input.runId)}/intervene`,
-        input.token,
-        {
-          body: renameKeys(omit(input, "token", "runId"), { requestId: "request_id" }),
-          requiredScopes: ["webagent.deep_research:manage"],
         },
       ),
 
@@ -169,16 +154,14 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
       getDetail: async () => asRecord((await api.get<unknown>({ token, runId })).data),
       streamEvents: (opts) =>
         api.events({ token, runId, lastEventId: opts.lastEventId, signal: opts.signal }),
-      respond: async (requestId, response, hasResponse) => {
-        if (!hasResponse) {
-          // The deepResearch outline gate has no wire-level skip; fabricating
-          // an approval on the user's behalf is worse than failing loudly.
-          throw new EAKValidationError(
-            "deepResearch input requests require an explicit response " +
-              '(e.g. "approve") — they cannot be skipped',
-          );
-        }
-        await api.intervene({ token, runId, requestId, response });
+      respond: async () => {
+        // DeepResearch runs have no human-in-the-loop gate — PLAN flows
+        // straight to GATHER, so a run never parks on an input request and
+        // there is nothing to respond to.
+        throw new EAKValidationError(
+          "deepResearch runs have no interactive gate — there is no input " +
+            "request to respond to",
+        );
       },
       cancel: async () => asRecord((await api.cancel<unknown>({ token, runId })).data),
       listArtifacts: async () => {
@@ -214,17 +197,15 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
      * follow-up run that inherits the prior run's context.
      */
     run: async (input: DeepResearchRunOptions): Promise<RunHandle> => {
-      const { token, topic, instruction, capture, limits, session, ...rest } = input;
-      const resolvedTopic = topic ?? instruction;
-      if (!resolvedTopic) {
+      const { token, topic, capture, limits, session, ...rest } = input;
+      if (!topic) {
         throw new EAKValidationError("deepResearch.run requires a topic");
       }
 
       const run = await api.run<{ run_id?: string; id?: string }>({
         token,
-        topic: resolvedTopic,
+        topic,
         ...rest,
-        ...(limits?.maxCostUsd !== undefined ? { maxCostUsd: limits.maxCostUsd } : {}),
         ...(limits?.maxDurationMinutes !== undefined
           ? { maxDurationMinutes: limits.maxDurationMinutes }
           : {}),
@@ -259,8 +240,6 @@ function normalizeDeepResearchRunInput(input: JsonObject): JsonObject {
   return renameKeys(input, {
     outputFormat: "output_format",
     targetAudience: "target_audience",
-    requireOutlineApproval: "require_outline_approval",
-    maxCostUsd: "max_cost_usd",
     maxDurationMinutes: "max_duration_minutes",
     callbackUrl: "callback_url",
     domainWhitelist: "domain_whitelist",

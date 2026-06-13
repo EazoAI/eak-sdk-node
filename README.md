@@ -352,8 +352,8 @@ console.log(result.output); // search results
 const research = await eak.deepResearch.run({
   token,
   topic: "State of EU battery recycling, 2026 update",
-  requireOutlineApproval: false,
-  limits: { maxCostUsd: "5.00", maxDurationMinutes: 120 },
+  depth: "standard", // light | standard | deep — the main research knob
+  limits: { maxDurationMinutes: 120 }, // wall-clock cap; the run self-terminates past it
 });
 
 const report = await research.wait();

@@ -349,8 +349,8 @@ console.log(result.output); // 搜索结果
 const research = await eak.deepResearch.run({
   token,
   topic: "欧盟电池回收行业 2026 年现状",
-  requireOutlineApproval: false,
-  limits: { maxCostUsd: "5.00", maxDurationMinutes: 120 },
+  depth: "standard", // light | standard | deep —— 调研深度，主要的旋钮
+  limits: { maxDurationMinutes: 120 }, // 墙钟上限，跑超自动终止
 });
 
 const report = await research.wait();

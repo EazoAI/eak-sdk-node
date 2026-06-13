@@ -241,7 +241,6 @@ describe("doAnything.run → RunHandle", () => {
       { proxyCountryCode: "US" },
       { model: "some-model" },
       { callbackUrl: "https://app.example.com/hook" },
-      { limits: { maxCostUsd: "5.00" } },
     ]) {
       await expect(
         client.doAnything.run({ token: TOKEN, instruction: "go", ...options }),
@@ -545,7 +544,7 @@ describe("deepResearch.run → RunHandle", () => {
     const run = await client.deepResearch.run({
       token: TOKEN,
       topic: "battery recycling, 2026 update",
-      limits: { maxCostUsd: "5.00", maxDurationMinutes: 120 },
+      limits: { maxDurationMinutes: 120 },
       session: { sessionId: "sess_dr" }, // follow-up run in an existing session
     });
 
@@ -553,29 +552,18 @@ describe("deepResearch.run → RunHandle", () => {
     expect(run.sessionRef).toEqual({ sessionId: "sess_dr" });
     expect(calls[0].body).toEqual({
       topic: "battery recycling, 2026 update",
-      max_cost_usd: "5.00",
       max_duration_minutes: 120,
       session_id: "sess_dr",
     });
   });
 
-  it("respond() posts the outline answer and refuses an empty skip", async () => {
-    const bodies: unknown[] = [];
-    const { client, calls } = makeClient((call) => {
-      if (call.pathname.endsWith("/intervene")) {
-        bodies.push(call.body);
-        return jsonResponse({ data: { ok: true } });
-      }
-      return jsonResponse({ data: { run_id: "dr_1" } });
-    });
+  it("respond() fails loudly — deepResearch has no interactive gate", async () => {
+    const { client, calls } = makeClient(() => jsonResponse({ data: { run_id: "dr_1" } }));
 
     const run = await client.deepResearch.run({ token: TOKEN, topic: "t" });
-    await run.respond("req_outline_1", "approve");
-    expect(bodies).toEqual([{ request_id: "req_outline_1", response: "approve" }]);
-
     const before = calls.length;
-    await expect(run.respond("req_outline_1")).rejects.toBeInstanceOf(EAKValidationError);
-    expect(calls.length).toBe(before); // refused locally — no wire skip exists
+    await expect(run.respond("req_1", "approve")).rejects.toBeInstanceOf(EAKValidationError);
+    expect(calls.length).toBe(before); // no /intervene call — there is no gate to answer
   });
 
   it("wait() populates result.artifacts with lazy content fetching", async () => {

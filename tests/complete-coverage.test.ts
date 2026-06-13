@@ -680,7 +680,7 @@ describe("complete public method coverage matrix", () => {
       });
     });
 
-    describe("deepResearch.run/get/events/intervene/followUp/cancel/feedback/listArtifacts/getArtifact", () => {
+    describe("deepResearch.run/get/events/followUp/cancel/feedback/listArtifacts/getArtifact", () => {
       it("covers all Deep Research parameters and routes", async () => {
         const h = createHarness();
         const token = delegationToken();
@@ -690,8 +690,6 @@ describe("complete public method coverage matrix", () => {
           topic: "battery recycling",
           outputFormat: "report",
           targetAudience: "investors",
-          requireOutlineApproval: true,
-          maxCostUsd: "1.00",
           maxDurationMinutes: 30,
           callbackUrl: "https://app.example.com/hooks/deep",
           domainWhitelist: ["eazo.ai"],
@@ -701,12 +699,6 @@ describe("complete public method coverage matrix", () => {
         for await (const _event of h.client.deepResearch.api.events({ token, runId: "deep_matrix", lastEventId: "2" })) {
           break;
         }
-        await h.client.deepResearch.api.intervene({
-          token,
-          runId: "deep_matrix",
-          requestId: "outline_matrix",
-          response: "approve",
-        });
         await h.client.deepResearch.api.followUp({ token, runId: "deep_matrix", text: "add risks" });
         await h.client.deepResearch.api.cancel({ token, runId: "deep_matrix" });
         await h.client.deepResearch.api.feedback({
@@ -730,8 +722,6 @@ describe("complete public method coverage matrix", () => {
               topic: "battery recycling",
               output_format: "report",
               target_audience: "investors",
-              require_outline_approval: true,
-              max_cost_usd: "1.00",
               max_duration_minutes: 30,
               callback_url: "https://app.example.com/hooks/deep",
               domain_whitelist: ["eazo.ai"],
@@ -743,11 +733,6 @@ describe("complete public method coverage matrix", () => {
             pathname: "/api/v1/projects/tenant_matrix/deep_research/runs/deep_matrix/events",
             method: "GET",
             headers: expect.objectContaining({ "last-event-id": "2" }),
-          },
-          {
-            pathname: "/api/v1/projects/tenant_matrix/deep_research/runs/deep_matrix/intervene",
-            method: "POST",
-            body: { request_id: "outline_matrix", response: "approve" },
           },
           {
             pathname: "/api/v1/projects/tenant_matrix/deep_research/runs/deep_matrix/messages",

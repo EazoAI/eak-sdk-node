@@ -58,8 +58,6 @@ export interface SnapshotAction {
 
 export interface RunLimits {
   maxDurationMinutes?: number;
-  /** Decimal string to avoid float precision, e.g. "5.00". */
-  maxCostUsd?: string;
 }
 
 export interface DoAnythingRunOptions {
@@ -286,7 +284,6 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
       const unsupported: string[] = PLATFORM_DECIDED_RUN_OPTIONS.filter(
         (key) => rest[key] !== undefined,
       );
-      if (limits?.maxCostUsd !== undefined) unsupported.push("limits.maxCostUsd");
       if (unsupported.length > 0) {
         throw new EAKValidationError(
           `doAnything.run does not support ${unsupported.join(", ")} — the wire create body ` +

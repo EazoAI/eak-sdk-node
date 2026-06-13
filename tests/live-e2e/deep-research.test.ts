@@ -14,8 +14,8 @@ import {
 
 const describeLiveE2E = liveE2EEnabled ? describe : describe.skip;
 
-// A deepResearch run takes 3-7 real minutes AFTER outline approval (the gate
-// itself arrives ~1 minute in), so it gets a budget independent of the
+// A deepResearch run takes 3-7 real minutes (PLAN flows straight to GATHER —
+// there is no outline-approval gate), so it gets a budget independent of the
 // generic stream timeout the other products use.
 const DR_WAIT_TIMEOUT_MS = Number(
   process.env.EAK_LIVE_DEEP_RESEARCH_WAIT_TIMEOUT_MS || 600_000,
@@ -28,7 +28,6 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
   let resultReady: Promise<RunResult | undefined> | undefined;
   let recordedEvents = 0;
   let recordedFile: string | undefined;
-  const approvedRequests: string[] = [];
 
   beforeAll(async () => {
     client = liveClient();
@@ -57,9 +56,7 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
           depth: "light",
           outputFormat: "report",
           targetAudience: "SDK maintainers",
-          requireOutlineApproval: true,
           limits: {
-            maxCostUsd: process.env.EAK_LIVE_DEEP_RESEARCH_MAX_COST_USD || "1.00",
             maxDurationMinutes: Number(
               process.env.EAK_LIVE_DEEP_RESEARCH_MAX_DURATION_MINUTES || 10,
             ),
@@ -73,11 +70,10 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
   }
 
   // One wait() shared across the file — this is the contract's §2 mainline.
-  // The run is created with requireOutlineApproval: true, so it parks on an
-  // outline-gate input request after PLAN; `onInputRequest` answers it through
-  // run.respond(requestId, "approve"). Without this the run waits for a human
-  // forever. The recorder persists every original wire envelope (event.raw)
-  // under .secrets/runs/deep_research-<runId>/ (EAK_OUT_DIR overrides).
+  // PLAN flows straight to GATHER (no outline-approval gate), so the run runs
+  // to completion without any human intervention. The recorder persists every
+  // original wire envelope (event.raw) under
+  // .secrets/runs/deep_research-<runId>/ (EAK_OUT_DIR overrides).
   function ensureResult() {
     resultReady ??= (async () => {
       const run = await ensureRun();
@@ -88,16 +84,6 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
       const result = await run.wait({
         timeoutMs: DR_WAIT_TIMEOUT_MS,
         onEvent: (event) => recorder.record(event),
-        onInputRequest: async (request) => {
-          const requestId = typeof request.requestId === "string" ? request.requestId : "";
-          // The outline gate must carry its request id (the SDK cannot answer
-          // a gate it cannot address) — empty means the backend regressed.
-          expect(requestId, "input request should carry requestId").toBeTruthy();
-          if (approvedRequests.includes(requestId)) return; // replayed event
-          await run.respond(requestId, "approve");
-          approvedRequests.push(requestId);
-          console.log(`  approved outline gate (request ${requestId})`);
-        },
       });
       recordedEvents = recorder.count();
       console.log(`recorded ${recordedEvents} events → ${recorder.file}`);
@@ -106,7 +92,7 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
     return resultReady;
   }
 
-  it("deepResearch.run({ token, topic, requireOutlineApproval, limits, ... }) returns a run", async () => {
+  it("deepResearch.run({ token, topic, depth, limits, ... }) returns a run", async () => {
     const run = await ensureRun();
     if (!run) return;
     expect(run.id).toBeTruthy();
@@ -129,20 +115,17 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
     expect(events.some((event) => event.runId === run.id)).toBe(true);
   });
 
-  it("run.respond() without a response fails loudly — the outline gate cannot be skipped", async () => {
+  it("run.respond() fails loudly — deepResearch has no interactive gate", async () => {
     const run = await ensureRun();
     if (!run) return;
-    await expect(run.respond("any-request")).rejects.toThrowError(EAKValidationError);
+    await expect(run.respond("any-request", "approve")).rejects.toThrowError(EAKValidationError);
   });
 
   it(
-    "run.wait() approves the outline gate via respond() and settles with a real report",
+    "run.wait() settles with a real cited report",
     async () => {
       const result = await ensureResult();
       if (!result) return;
-
-      // The gate must have been answered through the semantic surface.
-      expect(approvedRequests.length).toBeGreaterThan(0);
 
       expect(result.status).toBe("succeeded");
       // Domain content: a report, not a status flip. The settled output must

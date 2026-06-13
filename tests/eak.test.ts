@@ -1924,8 +1924,6 @@ describe("EazoAgentKit", () => {
       depth: "deep",
       outputFormat: "report",
       targetAudience: "investors",
-      requireOutlineApproval: false,
-      maxCostUsd: "5.00",
       maxDurationMinutes: 120,
       callbackUrl: "https://app.example.com/hooks/dr",
       domainWhitelist: ["eazo.ai"],
@@ -1941,15 +1939,13 @@ describe("EazoAgentKit", () => {
       depth: "deep",
       output_format: "report",
       target_audience: "investors",
-      require_outline_approval: false,
-      max_cost_usd: "5.00",
       max_duration_minutes: 120,
       callback_url: "https://app.example.com/hooks/dr",
       domain_whitelist: ["eazo.ai"],
     });
   });
 
-  it("routes DeepResearch run read/intervene/followUp/cancel/feedback to backend endpoints", async () => {
+  it("routes DeepResearch run read/followUp/cancel/feedback to backend endpoints", async () => {
     const token = jwt({ webagent_tenant_id: "tenant_1" });
     const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
     const client = new EazoAgentKit({
@@ -1968,12 +1964,6 @@ describe("EazoAgentKit", () => {
     });
 
     await client.deepResearch.api.get({ token, runId: "dr_run_1" });
-    await client.deepResearch.api.intervene({
-      token,
-      runId: "dr_run_1",
-      requestId: "req_outline_1",
-      response: "approve",
-    });
     await client.deepResearch.api.followUp({
       token,
       runId: "dr_run_1",
@@ -1991,11 +1981,6 @@ describe("EazoAgentKit", () => {
     const base = "https://eak.example.com/api/v1/projects/tenant_1/deep_research/runs/dr_run_1";
     expect(calls).toEqual([
       { url: base, method: "GET", body: undefined },
-      {
-        url: `${base}/intervene`,
-        method: "POST",
-        body: { request_id: "req_outline_1", response: "approve" },
-      },
       {
         url: `${base}/messages`,
         method: "POST",
@@ -2050,7 +2035,7 @@ describe("EazoAgentKit", () => {
         seen.url = String(url);
         seen.headers = init?.headers as Record<string, string>;
         return sseResponse(
-          'id: 1\nevent: run.input_request\ndata: {"request_id":"req_outline_1"}\n\nid: 2\nevent: final\ndata: done\n\n',
+          'id: 1\nevent: run.status_changed\ndata: {"phase":"gather"}\n\nid: 2\nevent: final\ndata: done\n\n',
         );
       }) as typeof fetch,
     });
@@ -2069,7 +2054,7 @@ describe("EazoAgentKit", () => {
     );
     expect(seen.headers?.["last-event-id"]).toBe("0");
     expect(events).toEqual([
-      { id: "1", event: "run.input_request", data: { request_id: "req_outline_1" } },
+      { id: "1", event: "run.status_changed", data: { phase: "gather" } },
       { id: "2", event: "final", data: "done" },
     ]);
   });
