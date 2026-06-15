@@ -142,9 +142,14 @@ export async function collectRunEvents(
   for (const event of events) {
     expect(typeof event.type, `${label} event.type should be a string`).toBe("string");
     expect(event.at, `${label} event.at should be set`).toBeTruthy();
+    // `event.data` follows the per-type contract (run-events.ts): rich events
+    // carry a small object, but `progress`/`phase`/`sectionReady`/… are a string,
+    // `resultsReady` a number, `checkCompleted` a boolean. So assert only that
+    // the normalizer set SOMETHING (defined, incl. the empty-string progress
+    // line) — not that it is always an object.
     expect(
-      event.data && typeof event.data === "object",
-      `${label} event.data should be an object`,
+      event.data !== undefined,
+      `${label} event.data should be set`,
     ).toBe(true);
     expect(event.raw, `${label} event.raw should carry the wire event`).toBeTruthy();
   }
