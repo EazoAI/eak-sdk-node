@@ -136,9 +136,13 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
       `recording monitor ${monitor.id} (waiting for TWO scheduled ticks @ ${INTERVAL_SECONDS}s) → ${recorder.dir}`,
     );
 
-    // tickN -> started_at (ms) for every tick whose started_at is after we began
-    // recording. We need two of them to measure a real inter-tick interval.
-    const freshTickStartedAt = new Map<number, number>();
+    // tickN -> completion timestamp (ms) for every SCHEDULER-driven tick whose
+    // completion lands after we began recording. The backend does not emit a
+    // `monitor.tick_started` event, so cadence is measured from consecutive
+    // `monitor.tick_completed` envelope timestamps (`event.raw.data.ts`); the
+    // baseline tick that fires immediately on (re)registration is excluded via
+    // its `is_first_tick` flag so it can't masquerade as a timed tick.
+    const freshTickCompletedAt = new Map<number, number>();
     const completedFreshTicks: number[] = [];
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -149,23 +153,28 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
     );
     try {
       // Monitor streams have no terminal event — the caller decides when to
-      // stop. The tick wire events (monitor.tick_started/completed) aren't part
-      // of the curated MonitorEvent surface, so read their raw payload (snake_
-      // case) off event.raw.
+      // stop. The tick wire events (monitor.tick_completed) aren't part of the
+      // curated MonitorEvent surface, so read their raw envelope (snake_case)
+      // off event.raw: `ts` is the completion timestamp, `data` the payload.
       for await (const event of monitor.events({ signal: controller.signal })) {
         recorder.record(event);
         const wireType = String(event.raw.event || "");
-        const inner =
-          (event.raw.data as { data?: Record<string, unknown> } | undefined)?.data ?? {};
-        if (wireType === "monitor.tick_started") {
-          const startedAt = Date.parse(String(inner.started_at ?? ""));
-          if (Number.isFinite(startedAt) && startedAt > startedAfter) {
-            freshTickStartedAt.set(Number(inner.tick_n), startedAt);
-          }
-        }
+        const envelope = event.raw.data as
+          | { ts?: unknown; data?: Record<string, unknown> }
+          | undefined;
+        const inner = envelope?.data ?? {};
         if (wireType === "monitor.tick_completed") {
+          // The immediate baseline tick carries no cadence signal — skip it.
+          if (inner.is_first_tick === true) continue;
+          const completedAt = Date.parse(String(envelope?.ts ?? ""));
           const tickN = Number(inner.tick_n);
-          if (freshTickStartedAt.has(tickN) && !completedFreshTicks.includes(tickN)) {
+          if (
+            Number.isFinite(completedAt) &&
+            completedAt > startedAfter &&
+            Number.isFinite(tickN) &&
+            !freshTickCompletedAt.has(tickN)
+          ) {
+            freshTickCompletedAt.set(tickN, completedAt);
             completedFreshTicks.push(tickN);
           }
         }
@@ -184,7 +193,7 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
     const [firstTickN, secondTickN] = completedFreshTicks;
     const gapSeconds =
       completedFreshTicks.length >= 2
-        ? (freshTickStartedAt.get(secondTickN)! - freshTickStartedAt.get(firstTickN)!) / 1000
+        ? (freshTickCompletedAt.get(secondTickN)! - freshTickCompletedAt.get(firstTickN)!) / 1000
         : undefined;
     console.log(
       `recorded ${recorder.count()} events; fresh ticks completed=[${completedFreshTicks.join(
