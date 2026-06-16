@@ -99,12 +99,12 @@ function createHarness() {
 
     if (url.pathname.endsWith("/events")) {
       return sseResponse(
-        'id: evt_1\nevent: run.started\ndata: {"type":"run.started","task_id":"run_matrix","data":{"ok":true}}\n\n',
+        'id: evt_1\nevent: run.message\ndata: {"type":"run.message","task_id":"run_matrix","data":{"text":"hi","role":"ai"}}\n\n',
       );
     }
 
-    if (url.pathname.includes("/do_anything/sessions") && url.pathname.endsWith("/runs")) {
-      return jsonResponse({ data: { run_id: "run_matrix" } });
+    if (url.pathname.endsWith("/do_anything/runs") && call.method === "POST") {
+      return jsonResponse({ data: { run_id: "run_matrix", session_id: "sess_matrix" } });
     }
 
     if (url.pathname.endsWith("/do_anything/sessions")) {
@@ -113,7 +113,12 @@ function createHarness() {
 
     if (url.pathname.includes("/do_anything/") && url.pathname.includes("/runs/run_matrix")) {
       return jsonResponse({
-        data: { run_id: "run_matrix", session_id: "sess_matrix", terminal_reason: "done" },
+        data: {
+          run_id: "run_matrix",
+          session_id: "sess_matrix",
+          status: "succeeded",
+          terminal_reason: "done",
+        },
       });
     }
 
@@ -514,22 +519,22 @@ describe("complete public method coverage matrix", () => {
 
   describe("webSearch/doAnything/track/deepResearch", () => {
     describe("webSearch.run/get/events/cancel", () => {
-      it("covers run sugar and all follow-up methods", async () => {
+      it("covers escape-hatch run and all follow-up methods", async () => {
         const h = createHarness();
         const token = delegationToken();
 
-        await h.client.webSearch.run({
+        await h.client.webSearch.api.run({
           token,
-          query: "eak sdk",
+          queries: ["eak sdk"],
           maxResultsPerQuery: 5,
           siteWhitelist: ["eazo.ai"],
           siteBlacklist: ["example.net"],
         });
-        await h.client.webSearch.get({ token, runId: "run_matrix" });
-        for await (const _event of h.client.webSearch.events({ token, runId: "run_matrix", lastEventId: "0" })) {
+        await h.client.webSearch.api.get({ token, runId: "run_matrix" });
+        for await (const _event of h.client.webSearch.api.events({ token, runId: "run_matrix", lastEventId: "0" })) {
           break;
         }
-        await h.client.webSearch.cancel({ token, runId: "run_matrix", reason: "test cleanup" });
+        await h.client.webSearch.api.cancel({ token, runId: "run_matrix", reason: "test cleanup" });
 
         const webSearchCalls = h.calls.filter((call) => call.pathname.includes("/web_search/"));
         expect(webSearchCalls).toMatchObject([
@@ -558,80 +563,73 @@ describe("complete public method coverage matrix", () => {
       });
     });
 
-    describe("doAnything.run/runAndWait/createSession/createRun/getRun/events/intervene/cancel/readArtifacts/readRecording", () => {
+    describe("doAnything.run/attach + api.createSession/createRun/getRun/events/intervene/cancel/readArtifacts/readRecording", () => {
       it("covers high-level and low-level Do Anything parameters and callbacks", async () => {
         const h = createHarness();
         const token = delegationToken();
         const observed: string[] = [];
 
-        await h.client.doAnything.run({
+        const handle = await h.client.doAnything.run({
           token,
-          instruction: "open eazo.ai",
-          session: { browser: "chromium" },
+          prompt: "open eazo.ai",
           profileId: "profile_matrix",
-          workspaceId: "workspace_matrix",
-          proxyCountryCode: "US",
           keepAlive: true,
           allowedActions: ["navigate"],
-          maxDurationMinutes: 1,
-          outputSchema: { type: "object" },
-          callbackUrl: "https://app.example.com/hooks/agent",
+          limits: { maxDurationMinutes: 1 },
         });
-        await h.client.doAnything.runAndWait({
-          token,
-          instruction: "summarize page",
-          timeoutMs: 100,
+        expect(handle.id).toBe("run_matrix");
+        expect(handle.sessionRef).toEqual({ sessionId: "sess_matrix" });
+        await handle.wait({
+          timeoutMs: 5_000,
           onEvent: () => {
             observed.push("event");
           },
         });
-        await h.client.doAnything.getRun({ token, sessionId: "sess_matrix", runId: "run_matrix" });
-        await h.client.doAnything.intervene({
+        await h.client.doAnything.api.getRun({ token, runId: "run_matrix" });
+        await h.client.doAnything.api.intervene({
           token,
-          sessionId: "sess_matrix",
           runId: "run_matrix",
           requestId: "input_matrix",
           response: "approve",
         });
-        await h.client.doAnything.cancel({
+        await h.client.doAnything.api.cancel({
           token,
-          sessionId: "sess_matrix",
           runId: "run_matrix",
           reason: "cleanup",
         });
-        await h.client.doAnything.readArtifacts({
+        await h.client.doAnything.api.readArtifacts({
           token,
           sessionId: "sess_matrix",
           artifactId: "artifact_matrix",
         });
-        await h.client.doAnything.readRecording({ token, sessionId: "sess_matrix" });
+        await h.client.doAnything.api.readRecording({ token, sessionId: "sess_matrix" });
 
         expect(observed).toContain("event");
-        expect(h.calls.find((call) => call.pathname.endsWith("/runs"))?.body).toMatchObject({
+        // Every knob — session-level included — rides on the single create
+        // body; there is no separate session create and no write-time
+        // `stream` event subscription.
+        expect(
+          h.calls.find((call) => call.pathname.endsWith("/do_anything/runs"))?.body,
+        ).toEqual({
           instructions: "open eazo.ai",
           profile_id: "profile_matrix",
-          workspace_id: "workspace_matrix",
-          proxy_country_code: "US",
           keep_alive: true,
           allowed_actions: ["navigate"],
           max_duration_minutes: 1,
-          output_schema: { type: "object" },
-          callback_url: "https://app.example.com/hooks/agent",
         });
         expect(h.calls.map((call) => `${call.method} ${call.pathname}`)).toEqual(
           expect.arrayContaining([
-            "POST /api/v1/projects/tenant_matrix/do_anything/sessions",
-            "POST /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs",
-            "GET /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs/run_matrix",
-            "POST /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs/run_matrix/intervene",
-            "POST /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/runs/run_matrix/cancel",
+            "POST /api/v1/projects/tenant_matrix/do_anything/runs",
+            "GET /api/v1/projects/tenant_matrix/do_anything/runs/run_matrix",
+            "POST /api/v1/projects/tenant_matrix/do_anything/runs/run_matrix/intervene",
+            "POST /api/v1/projects/tenant_matrix/do_anything/runs/run_matrix/cancel",
             "GET /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/artifacts/artifact_matrix",
             "GET /api/v1/projects/tenant_matrix/do_anything/sessions/sess_matrix/recording",
           ]),
         );
         expect(
           h.calls.find((call) =>
-            call.pathname.endsWith("/do_anything/sessions/sess_matrix/runs/run_matrix/intervene"),
+            call.pathname.endsWith("/do_anything/runs/run_matrix/intervene"),
           )?.body,
         ).toEqual({
           kind: "answer_input_request",
@@ -646,18 +644,18 @@ describe("complete public method coverage matrix", () => {
         const h = createHarness();
         const token = delegationToken();
 
-        await h.client.track.createMonitor({ token, url: "https://eazo.ai", instructions: "watch" });
-        await h.client.track.getMonitor({ token, monitorId: "monitor_matrix" });
-        await h.client.track.runNow({ token, monitorId: "monitor_matrix" });
-        for await (const _event of h.client.track.events({ token, monitorId: "monitor_matrix", lastEventId: "1" })) {
+        await h.client.track.api.createMonitor({ token, url: "https://eazo.ai", instructions: "watch" });
+        await h.client.track.api.getMonitor({ token, monitorId: "monitor_matrix" });
+        await h.client.track.api.runNow({ token, monitorId: "monitor_matrix" });
+        for await (const _event of h.client.track.api.events({ token, monitorId: "monitor_matrix", lastEventId: "1" })) {
           break;
         }
-        await h.client.track.updateMonitor({
+        await h.client.track.api.updateMonitor({
           token,
           monitorId: "monitor_matrix",
           schedule: "0 9 * * *",
         });
-        await h.client.track.deleteMonitor({ token, monitorId: "monitor_matrix" });
+        await h.client.track.api.deleteMonitor({ token, monitorId: "monitor_matrix" });
 
         expect(h.calls.filter((call) => call.pathname.includes("/track/"))).toMatchObject([
           {
@@ -682,43 +680,35 @@ describe("complete public method coverage matrix", () => {
       });
     });
 
-    describe("deepResearch.run/get/events/intervene/followUp/cancel/feedback/listArtifacts/getArtifact", () => {
+    describe("deepResearch.run/get/events/followUp/cancel/feedback/listArtifacts/getArtifact", () => {
       it("covers all Deep Research parameters and routes", async () => {
         const h = createHarness();
         const token = delegationToken();
 
-        await h.client.deepResearch.run({
+        await h.client.deepResearch.api.run({
           token,
           topic: "battery recycling",
           outputFormat: "report",
           targetAudience: "investors",
-          requireOutlineApproval: true,
-          maxCostUsd: "1.00",
           maxDurationMinutes: 30,
           callbackUrl: "https://app.example.com/hooks/deep",
           domainWhitelist: ["eazo.ai"],
           domainBlacklist: ["example.net"],
         });
-        await h.client.deepResearch.get({ token, runId: "deep_matrix" });
-        for await (const _event of h.client.deepResearch.events({ token, runId: "deep_matrix", lastEventId: "2" })) {
+        await h.client.deepResearch.api.get({ token, runId: "deep_matrix" });
+        for await (const _event of h.client.deepResearch.api.events({ token, runId: "deep_matrix", lastEventId: "2" })) {
           break;
         }
-        await h.client.deepResearch.intervene({
-          token,
-          runId: "deep_matrix",
-          requestId: "outline_matrix",
-          response: "approve",
-        });
-        await h.client.deepResearch.followUp({ token, runId: "deep_matrix", text: "add risks" });
-        await h.client.deepResearch.cancel({ token, runId: "deep_matrix" });
-        await h.client.deepResearch.feedback({
+        await h.client.deepResearch.api.followUp({ token, runId: "deep_matrix", text: "add risks" });
+        await h.client.deepResearch.api.cancel({ token, runId: "deep_matrix" });
+        await h.client.deepResearch.api.feedback({
           token,
           runId: "deep_matrix",
           rating: 5,
           feedbackText: "useful",
         });
-        await h.client.deepResearch.listArtifacts({ token, runId: "deep_matrix" });
-        await h.client.deepResearch.getArtifact({
+        await h.client.deepResearch.api.listArtifacts({ token, runId: "deep_matrix" });
+        await h.client.deepResearch.api.getArtifact({
           token,
           runId: "deep_matrix",
           artifactId: "artifact_matrix",
@@ -732,8 +722,6 @@ describe("complete public method coverage matrix", () => {
               topic: "battery recycling",
               output_format: "report",
               target_audience: "investors",
-              require_outline_approval: true,
-              max_cost_usd: "1.00",
               max_duration_minutes: 30,
               callback_url: "https://app.example.com/hooks/deep",
               domain_whitelist: ["eazo.ai"],
@@ -745,11 +733,6 @@ describe("complete public method coverage matrix", () => {
             pathname: "/api/v1/projects/tenant_matrix/deep_research/runs/deep_matrix/events",
             method: "GET",
             headers: expect.objectContaining({ "last-event-id": "2" }),
-          },
-          {
-            pathname: "/api/v1/projects/tenant_matrix/deep_research/runs/deep_matrix/intervene",
-            method: "POST",
-            body: { request_id: "outline_matrix", response: "approve" },
           },
           {
             pathname: "/api/v1/projects/tenant_matrix/deep_research/runs/deep_matrix/messages",

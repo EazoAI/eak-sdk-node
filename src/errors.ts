@@ -1,3 +1,4 @@
+import { KNOWN_SCOPES } from "./scopes";
 import { isJsonObject, type JsonObject } from "./types";
 
 /**
@@ -153,7 +154,10 @@ export function errorFromPayload(
   if (isDelegationRequired(code)) return new EAKDelegationRequiredError(message, options);
   if (status === 401) return new EAKAuthError(message, options);
   if (status === 403 || isPermissionDenied(code)) {
-    return new EAKPermissionDeniedError(message, options);
+    // Server permission errors pass through with the known scope set appended
+    // so callers can see what a valid grant looks like without leaving the
+    // stack trace.
+    return new EAKPermissionDeniedError(appendKnownScopes(message), options);
   }
   if (status === 400 || status === 422) return new EAKValidationError(message, options);
   if (status === 429) return new EAKRateLimitError(message, options);
@@ -214,6 +218,11 @@ function appendOnboardingHint(message: string, code: string): string {
   const hint = ONBOARDING_HINTS[code];
   if (!hint || message.includes(hint)) return message;
   return `${message} ${hint}`;
+}
+
+function appendKnownScopes(message: string): string {
+  if (message.includes("Known scopes:")) return message;
+  return `${message} (Known scopes: ${KNOWN_SCOPES.join(", ")})`;
 }
 
 function statusCodeToCode(status: number): string {

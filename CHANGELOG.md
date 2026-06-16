@@ -6,6 +6,43 @@ This project follows semantic versioning. Before `1.0.0`, minor versions may
 include SDK API changes, while patch versions are reserved for backward
 compatible fixes.
 
+## Unreleased
+
+Semantic-layer public surface per the frozen contract. **Breaking** — the
+WebAgent product namespaces are reorganized around handles; the 1:1 wire
+methods moved (no compatibility aliases).
+
+### Breaking
+
+- `doAnything.run` / `webSearch.run` / `deepResearch.run` now return a
+  `RunHandle` (`id`, `sessionRef`, `status()`, `events()`, `wait()`,
+  `respond()`, idempotent `cancel()`) instead of a wire envelope.
+  `attach(runId, { token })` reconnects to an existing run (doAnything
+  additionally needs `session`). `doAnything.runAndWait` is replaced by
+  `run()` + `wait()`.
+- `track.createMonitor/getMonitor/updateMonitor/deleteMonitor/runNow/events`
+  are replaced by `track.create` / `track.attach` returning a `MonitorHandle`
+  (`get()`, `update()`, `runNow()`, `events()`, `respond()`, `runs()`,
+  `run(runId)`, `delete()`). Monitor HITL answers (`respond`) and tick-run
+  read views (`runs` / `run`) are newly exposed.
+- The 1:1 wire-level methods moved to `eak.<product>.api.*` (e.g.
+  `eak.doAnything.api.createSession`, `eak.deepResearch.api.followUp`); their
+  shapes may evolve with the API and are no longer the documented mainline.
+- Handle event streams yield semantic `RunEvent`s (`type` / `runId` / `at` /
+  `isTerminal` / camelCase `data` / `raw`), end automatically at the terminal
+  event, and decode screenshot data URIs to `event.image.bytes`. The
+  `capture: { screenshots, videoFrames }` switch replaces hand-built
+  `stream.events` subscriptions; core events are always subscribed.
+- `delegateToken`: `agent` is optional (default `"sdk"`), `products` sugar
+  expands to per-product scope sets, and scope strings are validated locally —
+  malformed scopes throw `EAKValidationError` before any request.
+
+### Added
+
+- `result.artifacts` on `wait()` results — deepResearch deliverables with lazy
+  `content()` byte downloads; empty for other products.
+- Server permission errors now append the known scope set to the message.
+
 ## 0.2.0 - 2026-06-10
 
 Run-event handling now matches the live WebAgent backend, plus resilient

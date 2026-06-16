@@ -11,25 +11,49 @@ export const EAKScopes = {
   GUMEM_ACTION_READ: "gumem.action:read",
   GUMEM_PROFILE_READ: "gumem.profile:read",
 
-  DO_ANYTHING_RUN: "webagent.do_anything:run",
+  // WebAgent products: exactly two verbs per product — `read` (observe) and
+  // `manage` (anything that changes execution state). See
+  // wa/docs/eak-sdk-public-surface.md §3.
   DO_ANYTHING_READ: "webagent.do_anything:read",
-  DO_ANYTHING_STOP: "webagent.do_anything:stop",
-  DO_ANYTHING_CONTROL: "webagent.do_anything:control",
-  WEB_SEARCH_RUN: "webagent.web_search:run",
+  DO_ANYTHING_MANAGE: "webagent.do_anything:manage",
   WEB_SEARCH_READ: "webagent.web_search:read",
-  WEB_SEARCH_STOP: "webagent.web_search:stop",
-  DEEP_RESEARCH_RUN: "webagent.deep_research:run",
+  WEB_SEARCH_MANAGE: "webagent.web_search:manage",
   DEEP_RESEARCH_READ: "webagent.deep_research:read",
-  DEEP_RESEARCH_STOP: "webagent.deep_research:stop",
-  DEEP_RESEARCH_CONTROL: "webagent.deep_research:control",
-  TRACK_RUN: "webagent.track:run",
+  DEEP_RESEARCH_MANAGE: "webagent.deep_research:manage",
   TRACK_READ: "webagent.track:read",
-  TRACK_STOP: "webagent.track:stop",
   TRACK_MANAGE: "webagent.track:manage",
-
 } as const;
 
 export type EAKScope = (typeof EAKScopes)[keyof typeof EAKScopes];
+
+/** Product names accepted by `delegateToken({ products })`. */
+export type EAKProduct = "doAnything" | "webSearch" | "deepResearch" | "track";
+
+/**
+ * Scope sets granted by the `delegateToken({ products })` sugar — each
+ * product expands to its full verb pair: `read` + `manage`.
+ */
+export const EAKProductScopes: Record<EAKProduct, readonly EAKScope[]> = {
+  doAnything: [
+    EAKScopes.DO_ANYTHING_READ,
+    EAKScopes.DO_ANYTHING_MANAGE,
+  ],
+  webSearch: [
+    EAKScopes.WEB_SEARCH_READ,
+    EAKScopes.WEB_SEARCH_MANAGE,
+  ],
+  deepResearch: [
+    EAKScopes.DEEP_RESEARCH_READ,
+    EAKScopes.DEEP_RESEARCH_MANAGE,
+  ],
+  track: [
+    EAKScopes.TRACK_READ,
+    EAKScopes.TRACK_MANAGE,
+  ],
+} as const;
+
+/** Every scope string the SDK knows about (gumem + webagent). */
+export const KNOWN_SCOPES: readonly string[] = Object.values(EAKScopes);
 
 export const EAKScopeBundles = {
   GUMEM_READONLY: [EAKScopes.GUMEM_MEMORY_READ, EAKScopes.GUMEM_PROFILE_READ],
@@ -43,20 +67,21 @@ export const EAKScopeBundles = {
     EAKScopes.GUMEM_MESSAGE_WRITE,
     EAKScopes.GUMEM_ACTION_WRITE,
   ],
-  WEB_SEARCH: [
-    EAKScopes.WEB_SEARCH_RUN,
-    EAKScopes.WEB_SEARCH_READ,
-  ],
-  AGENT_DO_ANYTHING_BASIC: [
-    EAKScopes.DO_ANYTHING_RUN,
+  // One bundle per WebAgent product = [read, manage].
+  DO_ANYTHING: [
     EAKScopes.DO_ANYTHING_READ,
-    EAKScopes.DO_ANYTHING_STOP,
-    EAKScopes.DO_ANYTHING_CONTROL,
+    EAKScopes.DO_ANYTHING_MANAGE,
   ],
-  AGENT_TRACK: [
-    EAKScopes.TRACK_RUN,
+  WEB_SEARCH: [
+    EAKScopes.WEB_SEARCH_READ,
+    EAKScopes.WEB_SEARCH_MANAGE,
+  ],
+  DEEP_RESEARCH: [
+    EAKScopes.DEEP_RESEARCH_READ,
+    EAKScopes.DEEP_RESEARCH_MANAGE,
+  ],
+  TRACK: [
     EAKScopes.TRACK_READ,
-    EAKScopes.TRACK_STOP,
     EAKScopes.TRACK_MANAGE,
   ],
 } as const;

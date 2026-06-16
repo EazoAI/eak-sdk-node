@@ -1,0 +1,124 @@
+import { describe, expect, it } from "vitest";
+import { EAKTimeoutError, EazoAgentKit } from "../src";
+
+// Regression: aborting the caller-supplied AbortSignal must terminate an SSE
+// iteration even AFTER the connection is established. The transport used to
+// detach the user signal from the fetch controller as soon as response
+// headers arrived, so an abort during body streaming was a no-op and the
+// iterator only ended on a terminal event — `wait({ timeoutMs })` and the
+// live-e2e stream recorders hung on long-running runs.
+
+const encoder = new TextEncoder();
+
+function jwt(payload: Record<string, unknown>): string {
+  const encode = (value: unknown) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "none" })}.${encode(payload)}.`;
+}
+
+const TOKEN = jwt({ webagent_tenant_id: "tenant_1" });
+
+function heartbeatChunk(id: number): Uint8Array {
+  const envelope = {
+    id: String(id),
+    type: "stream.heartbeat",
+    task_id: "run_1",
+    session_id: "sess_1",
+    occurred_at: "2026-06-12T08:00:00+00:00",
+    data: {},
+  };
+  return encoder.encode(`id: ${id}\ndata: ${JSON.stringify(envelope)}\n\n`);
+}
+
+function makeStreamingClient(opts?: { jsonDetail?: unknown }) {
+  // Mimics real fetch semantics: the response body errors with AbortError
+  // when (and only when) the REQUEST's own signal aborts. If the SDK severs
+  // the user signal → request signal chain after connect, a user abort never
+  // reaches this stream.
+  const client = new EazoAgentKit({
+    accessKey: "ak_test",
+    secretKey: "sk_test",
+    host: "https://eak.example.com",
+    genauthBaseUrl: "https://eak.example.com",
+    webAgentBaseUrl: "https://eak.example.com",
+    fetch: (async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const wantsStream = new Headers(init?.headers).get("accept") === "text/event-stream";
+      if (!wantsStream) {
+        return new Response(
+          JSON.stringify(opts?.jsonDetail ?? { data: { id: "run_1", status: "running" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(heartbeatChunk(1));
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              try {
+                controller.error(new DOMException("Aborted", "AbortError"));
+              } catch {
+                // already closed/errored
+              }
+            },
+            { once: true },
+          );
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }) as typeof fetch,
+  });
+  return client;
+}
+
+describe("SSE abort propagation", () => {
+  it("aborting the caller signal terminates an in-flight wire event stream", async () => {
+    const client = makeStreamingClient();
+    const controller = new AbortController();
+
+    const iteration = (async () => {
+      for await (const _ev of client.deepResearch.api.events({
+        token: TOKEN,
+        runId: "run_1",
+        signal: controller.signal,
+      })) {
+        // consume heartbeats until the stream dies
+      }
+    })();
+
+    // Let the first heartbeat arrive so we abort an ESTABLISHED stream.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    controller.abort();
+
+    const outcome = await Promise.race([
+      iteration.then(
+        () => "ended",
+        (error: unknown) =>
+          error instanceof Error && error.name === "AbortError"
+            ? "aborted"
+            : `threw: ${String(error)}`,
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("hung"), 500)),
+    ]);
+
+    expect(outcome).toBe("aborted");
+  });
+
+  it("wait({ timeoutMs }) on a never-terminating stream rejects with EAKTimeoutError", async () => {
+    const client = makeStreamingClient();
+    const run = await client.webSearch.attach("run_1", { token: TOKEN });
+
+    const outcome = await Promise.race([
+      run.wait({ timeoutMs: 120 }).then(
+        () => "settled",
+        (error: unknown) => (error instanceof EAKTimeoutError ? "timeout-error" : `threw: ${String(error)}`),
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("hung"), 1_000)),
+    ]);
+
+    expect(outcome).toBe("timeout-error");
+  });
+});

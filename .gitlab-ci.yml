@@ -26,9 +26,11 @@ verify:
     - pnpm config set store-dir .pnpm-store
     - pnpm install --frozen-lockfile
   script:
+    # build first: tests/package-surface.test.ts imports the built dist/, so
+    # `tsc --noEmit` (which typechecks tests/) can't resolve it until dist exists.
+    - pnpm build
     - pnpm typecheck
     - pnpm test:ci
-    - pnpm build
     - pnpm pack --dry-run
 
 sync_github:

@@ -1,4 +1,47 @@
-import type { EAKEvent, EAKResponse, EAKTransport, JsonObject, RuntimeTokenInput } from "./types";
+import { EAKValidationError } from "./errors";
+import {
+  RunHandle,
+  type Artifact,
+  type CaptureOptions,
+  type RunWireOps,
+  type SessionRef,
+} from "./run-handle";
+import type { DeepResearchEvent } from "./run-events";
+import type { RunLimits } from "./do-anything";
+import {
+  isJsonObject,
+  type EAKEvent,
+  type EAKResponse,
+  type EAKTransport,
+  type JsonObject,
+  type RuntimeTokenInput,
+} from "./types";
+
+export interface DeepResearchRunOptions {
+  /** Delegation token — passed once here; the returned handle holds it. */
+  token: string;
+  /** The research topic. */
+  prompt: string;
+  capture?: CaptureOptions;
+  limits?: RunLimits;
+  /**
+   * Reuse an existing research session — a follow-up run that inherits the
+   * prior run's context. Pass `prior.sessionRef`.
+   */
+  session?: SessionRef;
+  // Product-specific options stay camelCase.
+  depth?: "light" | "standard" | "deep";
+  outputFormat?: string;
+  targetAudience?: string;
+  domainWhitelist?: string[];
+  domainBlacklist?: string[];
+  [key: string]: unknown;
+}
+
+export interface DeepResearchAttachOptions {
+  token: string;
+  capture?: CaptureOptions;
+}
 
 /**
  * DeepResearch capability namespace — runs are created with a research
@@ -7,11 +50,17 @@ import type { EAKEvent, EAKResponse, EAKTransport, JsonObject, RuntimeTokenInput
  * `/api/v1/projects/{tenant}/deep_research/...`.
  */
 export function createDeepResearchNamespace(transport: EAKTransport) {
-  return {
+  /**
+   * Wire-level escape hatch — 1:1 with the backend HTTP contract. Shapes
+   * here may evolve with the API and are not covered by the frozen public
+   * contract. `followUp` (terminal-run messages) and `feedback` (report
+   * rating) live only here.
+   */
+  const api = {
     run: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/deep_research/runs", input.token, {
         body: normalizeDeepResearchRunInput(omit(input, "token")),
-        requiredScopes: ["webagent.deep_research:run"],
+        requiredScopes: ["webagent.deep_research:manage"],
       }),
 
     get: <T = unknown>(input: RuntimeTokenInput & { runId: string }): Promise<EAKResponse<T>> =>
@@ -37,19 +86,6 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         },
       ),
 
-    intervene: <T = unknown>(
-      input: RuntimeTokenInput & { runId: string; requestId: string; response: unknown },
-    ): Promise<EAKResponse<T>> =>
-      transport.webAgentJson(
-        "POST",
-        `/deep_research/runs/${encodeURIComponent(input.runId)}/intervene`,
-        input.token,
-        {
-          body: renameKeys(omit(input, "token", "runId"), { requestId: "request_id" }),
-          requiredScopes: ["webagent.deep_research:control"],
-        },
-      ),
-
     followUp: <T = unknown>(
       input: RuntimeTokenInput & { runId: string; text: string },
     ): Promise<EAKResponse<T>> =>
@@ -59,7 +95,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: omit(input, "token", "runId"),
-          requiredScopes: ["webagent.deep_research:control"],
+          requiredScopes: ["webagent.deep_research:manage"],
         },
       ),
 
@@ -72,7 +108,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: {},
-          requiredScopes: ["webagent.deep_research:stop"],
+          requiredScopes: ["webagent.deep_research:manage"],
         },
       ),
 
@@ -85,7 +121,7 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: renameKeys(omit(input, "token", "runId"), { feedbackText: "feedback_text" }),
-          requiredScopes: ["webagent.deep_research:control"],
+          requiredScopes: ["webagent.deep_research:manage"],
         },
       ),
 
@@ -113,19 +149,110 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
         },
       ),
   };
+
+  function buildOps(token: string | undefined, runId: string): RunWireOps {
+    return {
+      getDetail: async () => asRecord((await api.get<unknown>({ token, runId })).data),
+      streamEvents: (opts) =>
+        api.events({ token, runId, lastEventId: opts.lastEventId, signal: opts.signal }),
+      respond: async () => {
+        // DeepResearch runs have no human-in-the-loop gate — PLAN flows
+        // straight to GATHER, so a run never parks on an input request and
+        // there is nothing to respond to.
+        throw new EAKValidationError(
+          "deepResearch runs have no interactive gate — there is no input " +
+            "request to respond to",
+        );
+      },
+      cancel: async () => asRecord((await api.cancel<unknown>({ token, runId })).data),
+      listArtifacts: async () => {
+        const res = await api.listArtifacts<{ items?: unknown }>({ token, runId });
+        const items = Array.isArray(res.data?.items) ? res.data.items : [];
+        return items.filter(isJsonObject).map((item) => toArtifact(item, token, runId));
+      },
+    };
+  }
+
+  function toArtifact(item: JsonObject, token: string | undefined, runId: string): Artifact {
+    const id = typeof item.id === "string" ? item.id : "";
+    return {
+      id,
+      name: typeof item.name === "string" && item.name ? item.name : undefined,
+      mime: typeof item.mime_type === "string" ? item.mime_type : undefined,
+      sizeBytes: typeof item.size_bytes === "number" ? item.size_bytes : undefined,
+      createdAt: typeof item.created_at === "string" ? item.created_at : undefined,
+      content: async () =>
+        (
+          await transport.webAgentBytes(
+            `/deep_research/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(id)}`,
+            token,
+            { requiredScopes: ["webagent.deep_research:read"] },
+          )
+        ).bytes,
+    };
+  }
+
+  return {
+    /**
+     * Start a research run. Pass `session: prior.sessionRef` to start a
+     * follow-up run that inherits the prior run's context.
+     */
+    run: async (input: DeepResearchRunOptions): Promise<RunHandle<DeepResearchEvent>> => {
+      const { token, prompt, capture, limits, session, ...rest } = input;
+      if (!prompt) {
+        throw new EAKValidationError("deepResearch.run requires a prompt");
+      }
+
+      const run = await api.run<{ run_id?: string; id?: string }>({
+        token,
+        topic: prompt,
+        ...rest,
+        ...(limits?.maxDurationMinutes !== undefined
+          ? { maxDurationMinutes: limits.maxDurationMinutes }
+          : {}),
+        ...(session ? { session_id: session.sessionId } : {}),
+      });
+      const runId = run.data.run_id || run.data.id;
+      if (!runId) {
+        throw new EAKValidationError("deepResearch run create did not return a run id");
+      }
+      return new RunHandle<DeepResearchEvent>(buildOps(token, runId), {
+        id: runId,
+        sessionRef: session,
+        capture,
+      });
+    },
+
+    /** Reconnect to an existing run. Verifies the run exists before returning. */
+    attach: async (
+      runId: string,
+      opts: DeepResearchAttachOptions,
+    ): Promise<RunHandle<DeepResearchEvent>> => {
+      const handle = new RunHandle<DeepResearchEvent>(buildOps(opts.token, runId), {
+        id: runId,
+        capture: opts.capture,
+      });
+      await handle.status();
+      return handle;
+    },
+
+    api,
+  };
 }
 
 function normalizeDeepResearchRunInput(input: JsonObject): JsonObject {
   return renameKeys(input, {
     outputFormat: "output_format",
     targetAudience: "target_audience",
-    requireOutlineApproval: "require_outline_approval",
-    maxCostUsd: "max_cost_usd",
     maxDurationMinutes: "max_duration_minutes",
     callbackUrl: "callback_url",
     domainWhitelist: "domain_whitelist",
     domainBlacklist: "domain_blacklist",
   });
+}
+
+function asRecord(value: unknown): JsonObject {
+  return isJsonObject(value) ? value : {};
 }
 
 function omit(value: object, ...keys: string[]): JsonObject {

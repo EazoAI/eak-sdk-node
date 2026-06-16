@@ -75,11 +75,21 @@ export interface UserRef {
 }
 
 interface DelegateTokenBaseInput {
-  agent: string;
-  scopes: readonly string[];
+  /** Audit label for this delegation. Defaults to "sdk". */
+  agent?: string;
+  /** Fine-grained scopes. May be combined with `products`. */
+  scopes?: readonly string[];
+  /** Per-product authorization sugar — expands to the product's scope set. */
+  products?: readonly EAKProductName[];
   expiresIn?: string | number;
   idempotencyKey?: string;
 }
+
+/**
+ * Product names accepted by `delegateToken({ products })`. Mirrors
+ * `EAKProduct` in scopes.ts (duplicated to keep this module import-free).
+ */
+export type EAKProductName = "doAnything" | "webSearch" | "deepResearch" | "track";
 
 export type DelegateTokenSilentInput = DelegateTokenBaseInput & {
   mode?: "silent";
@@ -220,6 +230,12 @@ export interface EAKTransport {
     token?: string,
     payload?: RequestPayload,
   ): Promise<EAKResponse<T>>;
+  /** Binary GET — used for artifact content downloads. */
+  webAgentBytes(
+    path: string,
+    token?: string,
+    payload?: RequestPayload,
+  ): Promise<{ bytes: Uint8Array; mime: string }>;
   webAgentSSE<T>(
     path: string,
     token?: string,

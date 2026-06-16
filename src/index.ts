@@ -12,17 +12,55 @@ export {
   EAKValidationError,
 } from "./errors";
 export type { EAKErrorCode, EAKErrorOptions } from "./errors";
-export { EAKEventTypes } from "./events";
-export { EAKScopeBundles, EAKScopes } from "./scopes";
+// `EAKEventTypes` (the curated `event.type` values) is exported from
+// run-events.ts below. The raw 45-entry wire catalog (WireEventTypes) stays
+// internal (events.ts) — it backs the wire→curated mapping + drift tests.
+export { EAKProductScopes, EAKScopeBundles, EAKScopes } from "./scopes";
+export type { EAKProduct } from "./scopes";
+export { RunHandle } from "./run-handle";
 export type {
-  DoAnythingResult,
-  DoAnythingRunAndWaitInput,
-  DoAnythingRunResult,
+  Artifact,
+  CaptureOptions,
+  RunEventsOptions,
+  RunResult,
+  RunStatus,
+  RunWaitOptions,
+  SessionRef,
+} from "./run-handle";
+export { EAKEventTypes } from "./run-events";
+export type {
+  EAKEventType,
+  RunEvent,
+  RunImage,
+  // Per-product event types (分型) — each product handle is typed to these.
+  CoreRunEvent,
+  DoAnythingEvent,
+  WebSearchEvent,
+  DeepResearchEvent,
+  MonitorEvent,
+  // Rich-event `event.data` object shapes (simple events' data is a scalar).
+  RunMessageData,
+  RunInputRequiredData,
+  RunScreenshotData,
+  RunDoneData,
+} from "./run-events";
+export { MonitorHandle } from "./track";
+export type {
+  MonitorEventsOptions,
+  MonitorRunsOptions,
+  TrackAttachOptions,
+  TrackCreateOptions,
+} from "./track";
+export type {
+  DoAnythingAttachOptions,
+  DoAnythingRunOptions,
   DoAnythingSnapshot,
+  RunLimits,
   SnapshotImage,
-  SnapshotElement,
   SnapshotAction,
 } from "./do-anything";
+export type { WebSearchAttachOptions, WebSearchRunOptions } from "./web-search";
+export type { DeepResearchAttachOptions, DeepResearchRunOptions } from "./deep-research";
 export type {
   GenAuthAccessTokenInput,
   GenAuthAdminToken,
@@ -54,6 +92,7 @@ export type {
   EAKMeta,
   EAKOptions,
   EAKResponse,
+  EAKProductName,
   EAKRuntimeConfig,
   EAKSSEEvent,
   InteractiveDelegationResponse,

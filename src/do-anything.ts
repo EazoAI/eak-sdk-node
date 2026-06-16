@@ -1,10 +1,18 @@
-import { EAKEventTypes } from "./events";
-import type {
-  EAKEvent,
-  EAKResponse,
-  EAKTransport,
-  JsonObject,
-  RuntimeTokenInput,
+import { EAKValidationError } from "./errors";
+import {
+  RunHandle,
+  type CaptureOptions,
+  type RunWireOps,
+  type SessionRef,
+} from "./run-handle";
+import type { DoAnythingEvent } from "./run-events";
+import {
+  isJsonObject,
+  type EAKEvent,
+  type EAKResponse,
+  type EAKTransport,
+  type JsonObject,
+  type RuntimeTokenInput,
 } from "./types";
 
 /**
@@ -23,8 +31,6 @@ export interface DoAnythingSnapshot {
   title?: string;
   /** The screenshot image — carried in JSON (base64) and/or by reference. */
   image?: SnapshotImage;
-  /** Important interactive/visible elements extracted from the page. */
-  elements?: SnapshotElement[];
   /** What the agent was doing at this step. */
   action?: SnapshotAction;
 }
@@ -42,17 +48,6 @@ export interface SnapshotImage {
   height?: number;
 }
 
-export interface SnapshotElement {
-  /** Stable index the agent uses to reference this element. */
-  index?: number;
-  /** "button" | "link" | "input" | ... */
-  role?: string;
-  /** Visible label/text. */
-  label?: string;
-  /** Bounding box in viewport coordinates. */
-  bbox?: { x: number; y: number; width: number; height: number };
-}
-
 export interface SnapshotAction {
   /** "navigate" | "click" | "type" | ... */
   kind?: string;
@@ -62,176 +57,89 @@ export interface SnapshotAction {
   summary?: string;
 }
 
-export interface DoAnythingRunInput extends RuntimeTokenInput {
-  instruction?: string;
-  /** @deprecated Use instruction. */
-  instructions?: string;
-  session?: JsonObject;
-  stream?: { events?: string[]; includeFrames?: boolean };
-  tools?: JsonObject;
-  [key: string]: unknown;
+export interface RunLimits {
+  maxDurationMinutes?: number;
 }
 
-/**
- * Result of `doAnything.run` — the run envelope returned by the backend.
- * Wire keys are snake_case `run_id` / `session_id` (the canonical run
- * naming shared by Do Anything, Deep Research, and Web Search). Pass both
- * to `events`/`getRun`/`intervene`/`cancel` to address the run. Other
- * envelope fields (status, output, costs, …) ride along under the index
- * signature.
- */
-export interface DoAnythingRunResult {
-  run_id: string;
-  session_id: string;
-  [key: string]: unknown;
-}
-
-/** Settled outcome of `doAnything.runAndWait`. */
-export interface DoAnythingResult {
-  runId: string;
-  sessionId: string;
-  /** Mapped terminal status. `timed_out` is client-side (the `timeoutMs` cap elapsed). */
-  status: "succeeded" | "failed" | "canceled" | "timed_out";
-  /** Backend `terminal_reason` (done / failed / canceled / expired), when known. */
-  terminalReason?: string;
-  /** Whether the backend judged the task successful, when reported. */
-  isTaskSuccessful?: boolean;
-  /** Final answer / output payload (shape is task-specific). */
-  output?: unknown;
+export interface DoAnythingRunOptions {
+  /** Delegation token — passed once here; the returned handle holds it. */
+  token: string;
+  /** Natural-language task for the agent to carry out. */
+  prompt: string;
+  capture?: CaptureOptions;
+  limits?: RunLimits;
   /**
-   * The full run envelope (settled from `getRun`) for fields not mapped above —
-   * `total_cost_usd`, `step_count`, `total_input_tokens`, etc. The `run.completed`
-   * event payload is leaner than the run-detail response, so `runAndWait` reads
-   * the canonical shape here.
+   * Reuse an existing browser session (follow-up run); a new one is created
+   * around the run by default. Maps to `session_id` on the wire create body.
    */
-  raw?: JsonObject;
+  session?: SessionRef;
+  // Product-specific options stay camelCase.
+  profileId?: string;
+  keepAlive?: boolean;
+  allowedActions?: string[];
+  skills?: string[];
+  [key: string]: unknown;
 }
 
-/**
- * Input for `doAnything.runAndWait`: a `run()` input plus per-event hooks and a
- * wall-clock cap. Hooks receive the event payload (`event.data.data`) and the
- * raw event. Hook / timeout / signal fields are not forwarded to the backend.
- */
-export interface DoAnythingRunAndWaitInput extends DoAnythingRunInput {
-  onEvent?: (event: EAKEvent) => void | Promise<void>;
-  onAction?: (payload: JsonObject, event: EAKEvent) => void | Promise<void>;
-  onScreenshot?: (payload: JsonObject, event: EAKEvent) => void | Promise<void>;
-  /** Fires on `run.input_request` (login / confirm). `payload.live_url` is the live browser, when present. */
-  onInputRequest?: (payload: JsonObject, event: EAKEvent) => void | Promise<void>;
-  /** Fires on `run.cost_update` — use for a live running-cost / budget guard. */
-  onCostUpdate?: (payload: JsonObject, event: EAKEvent) => void | Promise<void>;
-  /** Client-side wall-clock cap. On elapse, resolves with status `timed_out` (does NOT cancel the backend run). */
-  timeoutMs?: number;
-  signal?: AbortSignal;
+export interface DoAnythingAttachOptions {
+  token: string;
+  /**
+   * Optional — runs are addressed by `run_id` alone; resolution happens via
+   * `GET /do_anything/runs/{run_id}`. Accepted for callers that already hold
+   * a `sessionRef`; otherwise it is adopted from the run detail envelope.
+   */
+  session?: SessionRef;
+  capture?: CaptureOptions;
 }
+
+// Options the wire create body has no field for — either platform-decided
+// server-side (model via `llm.default_model`, cost ceiling via the internal
+// budget guard, browser egress via dynconfig) or retired phantom knobs the
+// backend never consumed and now 422s (extra="forbid"). Sending them would
+// be a silent drop or a wire error, so `run()` fails loudly up front
+// (contract §4).
+const PLATFORM_DECIDED_RUN_OPTIONS = [
+  "model",
+  "proxyCountryCode",
+  "callbackUrl",
+  "workspaceId",
+  "outputSchema",
+  "cacheScript",
+] as const;
 
 export function createDoAnythingNamespace(transport: EAKTransport) {
-  const namespace = {
-    run: async <T = DoAnythingRunResult>(input: DoAnythingRunInput): Promise<EAKResponse<T>> => {
-      const session = await namespace.createSession<{ id?: string; session_id?: string }>({
-        token: input.token,
-        ...(input.session || {}),
-      });
-      const sessionId = session.data.id || session.data.session_id;
-      if (!sessionId) throw new Error("doAnything.createSession did not return a session id");
-      const run = await namespace.createRun<T>({
-        ...omit(input, "session"),
-        token: input.token,
-        sessionId,
-      });
-      return attachSessionId(run, sessionId);
-    },
-
-    // High-level: start a run and drive its event stream to a terminal state,
-    // returning a settled { status, output, ... }. Internally handles run() +
-    // events() + RUN_COMPLETED detection + a getRun() fallback if the stream
-    // closes without a terminal event. Use events() directly for fine control.
-    runAndWait: async (input: DoAnythingRunAndWaitInput): Promise<DoAnythingResult> => {
-      const {
-        onEvent,
-        onAction,
-        onScreenshot,
-        onInputRequest,
-        onCostUpdate,
-        timeoutMs,
-        signal,
-        ...runInput
-      } = input;
-      const run = await namespace.run<DoAnythingRunResult>(runInput as DoAnythingRunInput);
-      const runId = String(run.data.run_id ?? "");
-      const sessionId = String(run.data.session_id ?? "");
-      if (!runId || !sessionId) {
-        throw new Error(
-          `doAnything.runAndWait: run did not return ids: ${JSON.stringify(run.data)}`,
-        );
-      }
-
-      const { signal: waitSignal, timedOut } = withTimeout(signal, timeoutMs);
-      let sawTerminal = false;
-      let terminalPayload: JsonObject = {};
-      try {
-        for await (const event of namespace.events<JsonObject>({
-          token: input.token,
-          sessionId,
-          runId,
-          signal: waitSignal,
-          onlyTopLevel: true, // sub-run events don't concern the caller's run
-        })) {
-          await onEvent?.(event);
-          const payload = eventPayload(event);
-          if (event.event === EAKEventTypes.RUN_ACTION_STARTED) await onAction?.(payload, event);
-          else if (event.event === EAKEventTypes.RUN_SCREENSHOT) await onScreenshot?.(payload, event);
-          else if (event.event === EAKEventTypes.RUN_INPUT_REQUEST)
-            await onInputRequest?.(payload, event);
-          else if (event.event === EAKEventTypes.RUN_COST_UPDATE) await onCostUpdate?.(payload, event);
-          else if (event.event === EAKEventTypes.RUN_COMPLETED) {
-            sawTerminal = true;
-            terminalPayload = payload;
-            break;
-          }
-        }
-      } catch (err) {
-        if (timedOut() && !signal?.aborted) return { runId, sessionId, status: "timed_out" };
-        throw err; // user abort or non-retryable stream error
-      }
-      // Settle from the run-detail envelope, not the leaner run.completed payload,
-      // so the result carries the canonical shape (total_cost_usd, step_count,
-      // tokens, …) on `result.raw`. Fall back to the terminal event payload if
-      // getRun is unavailable.
-      try {
-        const detail = await namespace.getRun<JsonObject>({ token: input.token, sessionId, runId });
-        return settleRun(runId, sessionId, detail.data);
-      } catch (err) {
-        if (sawTerminal) return settleRun(runId, sessionId, terminalPayload);
-        throw err;
-      }
-    },
-
+  /**
+   * Wire-level escape hatch — 1:1 with the backend HTTP contract
+   * (snake_case fields). Run-scoped methods use the single-ID route family
+   * `/do_anything/runs/{run_id}` (eak-sdk-public-surface.md §12.1); session
+   * endpoints stay session-scoped. Shapes here may evolve with the API and
+   * are not covered by the frozen public contract.
+   */
+  const api = {
     createSession: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/do_anything/sessions", input.token, {
         body: omit(input, "token"),
-        requiredScopes: ["webagent.do_anything:run"],
+        requiredScopes: ["webagent.do_anything:manage"],
       }),
 
-    createRun: <T = unknown>(
-      input: RuntimeTokenInput & { sessionId: string } & JsonObject,
-    ): Promise<EAKResponse<T>> =>
-      transport.webAgentJson(
-        "POST",
-        `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs`,
-        input.token,
-        {
-          body: normalizeDoAnythingRunInput(omit(input, "token", "sessionId")),
-          requiredScopes: ["webagent.do_anything:run"],
-        },
-      ),
+    /**
+     * `POST /do_anything/runs` — one call creates the run. Without
+     * `session_id` a fresh session is created around the run; with it the
+     * run is a follow-up in that session (409 while the prior run is
+     * non-terminal).
+     */
+    createRun: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
+      transport.webAgentJson("POST", "/do_anything/runs", input.token, {
+        body: normalizeDoAnythingRunInput(omit(input, "token")),
+        requiredScopes: ["webagent.do_anything:manage"],
+      }),
 
     getRun: <T = unknown>(
-      input: RuntimeTokenInput & { sessionId: string; runId: string },
+      input: RuntimeTokenInput & { runId: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "GET",
-        `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}`,
+        `/do_anything/runs/${encodeURIComponent(input.runId)}`,
         input.token,
         {
           requiredScopes: ["webagent.do_anything:read"],
@@ -240,30 +148,35 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
 
     events: async function* <T = unknown>(
       input: RuntimeTokenInput & {
-        sessionId: string;
-        runId?: string;
+        runId: string;
         lastEventId?: string;
         signal?: AbortSignal;
         /**
+         * Forwarded as the `include_screenshots` query flag — set false to
+         * skip `run.screenshot` rows in the replay/backfill window.
+         */
+        includeScreenshots?: boolean;
+        /**
          * Drop events for internal sub-runs (planning / grading) and yield only
-         * the top-level run's events. Requires `runId`; matches on
-         * `event.data.task_id`. Default false.
+         * the top-level run's events. Matches on `event.data.task_id`.
+         * Default false.
          */
         onlyTopLevel?: boolean;
         onReconnect?: (info: { attempt: number; lastEventId?: string; error: unknown }) => void;
       },
     ): AsyncIterable<EAKEvent<T>> {
-      const path = input.runId
-        ? `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}/events`
-        : `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/events`;
+      const path = `/do_anything/runs/${encodeURIComponent(input.runId)}/events`;
       const stream = transport.webAgentSSE<T>(path, input.token, {
         lastEventId: input.lastEventId,
         requiredScopes: ["webagent.do_anything:read"],
         signal: input.signal,
         onReconnect: input.onReconnect,
+        ...(input.includeScreenshots === undefined
+          ? {}
+          : { query: { include_screenshots: input.includeScreenshots } }),
       });
       for await (const event of stream) {
-        if (input.onlyTopLevel && input.runId) {
+        if (input.onlyTopLevel) {
           const taskId = envelopeTaskId(event);
           if (taskId && taskId !== input.runId) continue; // skip sub-run events
         }
@@ -272,28 +185,28 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
     },
 
     intervene: <T = unknown>(
-      input: RuntimeTokenInput & { sessionId: string; runId: string } & JsonObject,
+      input: RuntimeTokenInput & { runId: string } & JsonObject,
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "POST",
-        `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}/intervene`,
+        `/do_anything/runs/${encodeURIComponent(input.runId)}/intervene`,
         input.token,
         {
-          body: normalizeDoAnythingInterveneInput(omit(input, "token", "sessionId", "runId")),
-          requiredScopes: ["webagent.do_anything:control"],
+          body: normalizeDoAnythingInterveneInput(omit(input, "token", "runId")),
+          requiredScopes: ["webagent.do_anything:manage"],
         },
       ),
 
     cancel: <T = unknown>(
-      input: RuntimeTokenInput & { sessionId: string; runId: string; reason?: string },
+      input: RuntimeTokenInput & { runId: string; reason?: string },
     ): Promise<EAKResponse<T>> =>
       transport.webAgentJson(
         "POST",
-        `/do_anything/sessions/${encodeURIComponent(input.sessionId)}/runs/${encodeURIComponent(input.runId)}/cancel`,
+        `/do_anything/runs/${encodeURIComponent(input.runId)}/cancel`,
         input.token,
         {
-          body: omit(input, "token", "sessionId", "runId"),
-          requiredScopes: ["webagent.do_anything:stop"],
+          body: omit(input, "token", "runId"),
+          requiredScopes: ["webagent.do_anything:manage"],
         },
       ),
 
@@ -322,20 +235,122 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
       ),
   };
 
-  return namespace;
+  function buildOps(
+    token: string | undefined,
+    runId: string,
+    capture: CaptureOptions | undefined,
+  ): RunWireOps {
+    return {
+      getDetail: async () => asRecord((await api.getRun<unknown>({ token, runId })).data),
+      streamEvents: (opts) =>
+        api.events({
+          token,
+          runId,
+          lastEventId: opts.lastEventId,
+          signal: opts.signal,
+          // Skip screenshot rows in backfill when the caller did not opt in.
+          includeScreenshots: capture?.screenshots ? undefined : false,
+        }),
+      respond: async (requestId, response, hasResponse) => {
+        await api.intervene({
+          token,
+          runId,
+          requestId,
+          ...(hasResponse ? { response } : {}),
+        });
+      },
+      cancel: async (reason) =>
+        asRecord(
+          (
+            await api.cancel<unknown>({
+              token,
+              runId,
+              ...(reason === undefined ? {} : { reason }),
+            })
+          ).data,
+        ),
+    };
+  }
+
+  return {
+    /** Start a run. Returns a handle — see `RunHandle` for the run lifecycle. */
+    run: async (input: DoAnythingRunOptions): Promise<RunHandle<DoAnythingEvent>> => {
+      const { token, prompt, capture, limits, session, ...rest } = input;
+      if (!prompt || typeof prompt !== "string") {
+        throw new EAKValidationError("doAnything.run requires a prompt string");
+      }
+
+      // Fail loudly on options the wire create body cannot carry — a silent
+      // drop would let callers believe a knob took effect when it never
+      // reached the backend.
+      const unsupported: string[] = PLATFORM_DECIDED_RUN_OPTIONS.filter(
+        (key) => rest[key] !== undefined,
+      );
+      if (unsupported.length > 0) {
+        throw new EAKValidationError(
+          `doAnything.run does not support ${unsupported.join(", ")} — the wire create body ` +
+            "has no such field (the platform decides these server-side), so the value would " +
+            "be silently dropped. Remove it from the call.",
+        );
+      }
+
+      const created = await api.createRun<{ run_id?: string; id?: string; session_id?: string }>({
+        token,
+        instructions: prompt,
+        ...rest,
+        ...(session?.sessionId ? { sessionId: session.sessionId } : {}),
+        ...(limits?.maxDurationMinutes !== undefined
+          ? { maxDurationMinutes: limits.maxDurationMinutes }
+          : {}),
+      });
+      const runId = created.data.run_id || created.data.id;
+      if (!runId) {
+        throw new EAKValidationError("doAnything run create did not return a run id");
+      }
+      const sessionId =
+        typeof created.data.session_id === "string" && created.data.session_id
+          ? created.data.session_id
+          : session?.sessionId;
+
+      return new RunHandle<DoAnythingEvent>(buildOps(token, runId, capture), {
+        id: runId,
+        sessionRef: sessionId ? { sessionId } : undefined,
+        capture,
+      });
+    },
+
+    /**
+     * Reconnect to an existing run by id. Verifies the run exists before
+     * returning; `sessionRef` is adopted from the run detail envelope when
+     * not supplied.
+     */
+    attach: async (
+      runId: string,
+      opts: DoAnythingAttachOptions,
+    ): Promise<RunHandle<DoAnythingEvent>> => {
+      const sessionId = opts.session?.sessionId;
+      const handle = new RunHandle<DoAnythingEvent>(buildOps(opts.token, runId, opts.capture), {
+        id: runId,
+        sessionRef: sessionId ? { sessionId } : undefined,
+        capture: opts.capture,
+      });
+      await handle.status();
+      return handle;
+    },
+
+    api,
+  };
 }
 
+// camelCase conveniences → the snake_case fields of the wire create body
+// (CreateDoAnythingRunRequest). Keys already in wire shape pass through.
 function normalizeDoAnythingRunInput(input: JsonObject): JsonObject {
   const body = renameKeys(input, {
-    instruction: "instructions",
+    sessionId: "session_id",
     profileId: "profile_id",
-    workspaceId: "workspace_id",
-    proxyCountryCode: "proxy_country_code",
     keepAlive: "keep_alive",
     allowedActions: "allowed_actions",
     maxDurationMinutes: "max_duration_minutes",
-    outputSchema: "output_schema",
-    callbackUrl: "callback_url",
   });
   return body;
 }
@@ -348,10 +363,6 @@ function normalizeDoAnythingInterveneInput(input: JsonObject): JsonObject {
   return body;
 }
 
-// `run` composes createSession + createRun; the backend run envelope already
-// carries `session_id`, but guarantee it for any backend that omits it so the
-// merged result always has both ids. Inject under the canonical snake_case key
-// (NOT camelCase) so callers read one consistent `session_id` field.
 // The run/task id on a WebAgent run event envelope (`event.data.task_id`) —
 // used to tell a top-level run's events from its internal sub-runs.
 function envelopeTaskId(event: EAKEvent): string | undefined {
@@ -361,61 +372,8 @@ function envelopeTaskId(event: EAKEvent): string | undefined {
     : undefined;
 }
 
-// The per-event payload (`event.data.data`) for WebAgent run events.
-function eventPayload(event: EAKEvent): JsonObject {
-  const envelope = event.data as { data?: unknown } | null | undefined;
-  const inner = envelope && typeof envelope === "object" ? envelope.data : undefined;
-  return inner && typeof inner === "object" ? (inner as JsonObject) : {};
-}
-
-// Map a terminal run payload (a run.completed event's payload, or a getRun
-// response) to a settled DoAnythingResult. Completion defaults to "succeeded"
-// unless the backend signals failure / cancellation.
-function settleRun(runId: string, sessionId: string, p: JsonObject): DoAnythingResult {
-  const terminalReason = typeof p.terminal_reason === "string" ? p.terminal_reason : undefined;
-  const isTaskSuccessful = typeof p.is_task_successful === "boolean" ? p.is_task_successful : undefined;
-  let status: DoAnythingResult["status"];
-  if (terminalReason === "canceled") status = "canceled";
-  else if (terminalReason === "failed" || terminalReason === "expired" || isTaskSuccessful === false)
-    status = "failed";
-  else status = "succeeded";
-  return { runId, sessionId, status, terminalReason, isTaskSuccessful, output: p.output, raw: p };
-}
-
-// Combine an optional user signal with an optional wall-clock timeout into one
-// signal (Node 18 has no AbortSignal.any). `timedOut()` reports whether OUR
-// timer fired (vs the user aborting), so the caller can distinguish them.
-function withTimeout(
-  signal: AbortSignal | undefined,
-  timeoutMs: number | undefined,
-): { signal?: AbortSignal; timedOut: () => boolean } {
-  if (!timeoutMs) return { signal, timedOut: () => false };
-  const controller = new AbortController();
-  let fired = false;
-  const timer = setTimeout(() => {
-    fired = true;
-    controller.abort();
-  }, timeoutMs);
-  controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
-  if (signal) {
-    if (signal.aborted) controller.abort();
-    else signal.addEventListener("abort", () => controller.abort(), { once: true });
-  }
-  return { signal: controller.signal, timedOut: () => fired };
-}
-
-function attachSessionId<T>(response: EAKResponse<T>, sessionId: string): EAKResponse<T> {
-  if (!isRecord(response.data)) return response;
-  if (typeof response.data.sessionId === "string" || typeof response.data.session_id === "string") {
-    return response;
-  }
-  return {
-    ...response,
-    data: {
-      ...response.data,
-      session_id: sessionId,
-    } as T,
-  };
+function asRecord(value: unknown): JsonObject {
+  return isJsonObject(value) ? value : {};
 }
 
 function omit(value: object, ...keys: string[]): JsonObject {
@@ -434,8 +392,4 @@ function renameKeys(value: JsonObject, mapping: Record<string, string>): JsonObj
     if (out[target] === undefined) out[target] = item;
   }
   return out;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

@@ -1,11 +1,54 @@
-import type { EAKEvent, EAKResponse, EAKTransport, JsonObject, RuntimeTokenInput } from "./types";
+import { EAKError, EAKValidationError } from "./errors";
+import {
+  RunHandle,
+  type CaptureOptions,
+  type RunWireOps,
+  type SessionRef,
+} from "./run-handle";
+import type { WebSearchEvent } from "./run-events";
+import type { RunLimits } from "./do-anything";
+import {
+  isJsonObject,
+  type EAKEvent,
+  type EAKResponse,
+  type EAKTransport,
+  type JsonObject,
+  type RuntimeTokenInput,
+} from "./types";
+
+export interface WebSearchRunOptions {
+  /** Delegation token — passed once here; the returned handle holds it. */
+  token: string;
+  /** What to search for — one query, or several for a multi-query search. */
+  prompt: string | string[];
+  capture?: CaptureOptions;
+  /** Not supported by webSearch yet — passing it throws locally. */
+  limits?: RunLimits;
+  /** Not supported by webSearch — searches don't run in reusable sessions. */
+  session?: SessionRef;
+  // Product-specific options stay camelCase.
+  maxResultsPerQuery?: number;
+  siteWhitelist?: string[];
+  siteBlacklist?: string[];
+  [key: string]: unknown;
+}
+
+export interface WebSearchAttachOptions {
+  token: string;
+  capture?: CaptureOptions;
+}
 
 export function createWebSearchNamespace(transport: EAKTransport) {
-  return {
+  /**
+   * Wire-level escape hatch — 1:1 with the backend HTTP contract. Shapes
+   * here may evolve with the API and are not covered by the frozen public
+   * contract.
+   */
+  const api = {
     run: <T = unknown>(input: RuntimeTokenInput & JsonObject): Promise<EAKResponse<T>> =>
       transport.webAgentJson("POST", "/web_search/runs", input.token, {
         body: normalizeWebSearchRunInput(omit(input, "token")),
-        requiredScopes: ["webagent.web_search:run"],
+        requiredScopes: ["webagent.web_search:manage"],
       }),
 
     get: <T = unknown>(input: RuntimeTokenInput & { runId: string }): Promise<EAKResponse<T>> =>
@@ -40,9 +83,85 @@ export function createWebSearchNamespace(transport: EAKTransport) {
         input.token,
         {
           body: omit(input, "token", "runId"),
-          requiredScopes: ["webagent.web_search:stop"],
+          requiredScopes: ["webagent.web_search:manage"],
         },
       ),
+  };
+
+  function buildOps(
+    token: string | undefined,
+    runId: string,
+  ): RunWireOps {
+    return {
+      getDetail: async () => asRecord((await api.get<unknown>({ token, runId })).data),
+      streamEvents: (opts) =>
+        api.events({ token, runId, lastEventId: opts.lastEventId, signal: opts.signal }),
+      respond: async () => {
+        // The webSearch wire has no intervene endpoint and never emits
+        // input requests; failing loudly beats a confusing 404.
+        throw new EAKError(
+          "webSearch runs never request input — respond() is not applicable",
+          { code: "validation.failed" },
+        );
+      },
+      cancel: async (reason) =>
+        asRecord(
+          (
+            await api.cancel<unknown>({
+              token,
+              runId,
+              ...(reason === undefined ? {} : { reason }),
+            })
+          ).data,
+        ),
+    };
+  }
+
+  return {
+    /** Start a search run. Returns a handle — see `RunHandle` for the run lifecycle. */
+    run: async (input: WebSearchRunOptions): Promise<RunHandle<WebSearchEvent>> => {
+      const { token, prompt, capture, limits, session, ...rest } = input;
+      if (session) {
+        throw new EAKValidationError(
+          "webSearch runs do not execute in reusable sessions — drop the session option",
+        );
+      }
+      if (limits) {
+        throw new EAKValidationError(
+          "webSearch does not support limits yet — drop the limits option",
+        );
+      }
+      const resolvedQueries = Array.isArray(prompt) ? prompt : prompt ? [prompt] : undefined;
+      if (!resolvedQueries || resolvedQueries.length === 0) {
+        throw new EAKValidationError("webSearch.run requires a prompt");
+      }
+
+      const run = await api.run<{ run_id?: string; id?: string }>({
+        token,
+        queries: resolvedQueries,
+        ...rest,
+      });
+      const runId = run.data.run_id || run.data.id;
+      if (!runId) {
+        throw new EAKValidationError("webSearch run create did not return a run id");
+      }
+      return new RunHandle<WebSearchEvent>(buildOps(token, runId), { id: runId, capture });
+    },
+
+    /** Reconnect to an existing run. Verifies the run exists before returning. */
+    attach: async (
+      runId: string,
+      opts: WebSearchAttachOptions,
+    ): Promise<RunHandle<WebSearchEvent>> => {
+      const handle = new RunHandle<WebSearchEvent>(buildOps(opts.token, runId), {
+        id: runId,
+        capture: opts.capture,
+      });
+      await handle.status();
+      return handle;
+    },
+
+    api,
   };
 }
 
@@ -52,11 +171,11 @@ function normalizeWebSearchRunInput(input: JsonObject): JsonObject {
     siteWhitelist: "site_whitelist",
     siteBlacklist: "site_blacklist",
   });
-  if (typeof body.query === "string" && !Array.isArray(body.queries)) {
-    body.queries = [body.query];
-  }
-  delete body.query;
   return body;
+}
+
+function asRecord(value: unknown): JsonObject {
+  return isJsonObject(value) ? value : {};
 }
 
 function omit(value: object, ...keys: string[]): JsonObject {
