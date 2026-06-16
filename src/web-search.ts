@@ -96,11 +96,11 @@ export function createWebSearchNamespace(transport: EAKTransport) {
       getDetail: async () => asRecord((await api.get<unknown>({ token, runId })).data),
       streamEvents: (opts) =>
         api.events({ token, runId, lastEventId: opts.lastEventId, signal: opts.signal }),
-      respond: async () => {
-        // The webSearch wire has no intervene endpoint and never emits
-        // input requests; failing loudly beats a confusing 404.
+      postAction: async () => {
+        // webSearch runs never emit interactions; failing loudly beats a
+        // confusing 404.
         throw new EAKError(
-          "webSearch runs never request input — respond() is not applicable",
+          "webSearch runs never request interaction — there is no action to invoke",
           { code: "validation.failed" },
         );
       },

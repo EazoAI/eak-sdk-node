@@ -1,13 +1,16 @@
 import { EAKValidationError } from "./errors";
+import { InteractionHandle, type Interaction } from "./interactions";
 import { camelizeRecord, normalizeRunEvent, type MonitorEvent } from "./run-events";
 import {
   isJsonObject,
   type EAKEvent,
+  type EAKHttpMethod,
   type EAKResponse,
   type EAKTransport,
   type JsonObject,
   type RuntimeTokenInput,
 } from "./types";
+import type { Action } from "./interactions";
 
 export interface TrackCreateOptions {
   /** Delegation token — passed once here; the returned handle holds it. */
@@ -37,7 +40,7 @@ interface MonitorWireOps {
   update(input: JsonObject): Promise<JsonObject>;
   runNow(): Promise<JsonObject>;
   streamEvents(opts: MonitorEventsOptions): AsyncIterable<EAKEvent<unknown>>;
-  respond(requestId: string, response: unknown, hasResponse: boolean): Promise<void>;
+  postAction(action: Action, body: JsonObject | undefined): Promise<void>;
   listRuns(opts: MonitorRunsOptions): Promise<JsonObject>;
   getRun(runId: string): Promise<JsonObject>;
   delete(): Promise<void>;
@@ -84,11 +87,15 @@ export class MonitorHandle {
   }
 
   /**
-   * Answer a HITL request on the monitor (e.g. unlock a `needs_reauth` park
-   * after the user re-logged in). Omitting `response` skips the request.
+   * Wrap an {@link Interaction} (from `event.data` of an `interaction` event on
+   * the monitor stream — e.g. a `site_login` to unlock a `needs_reauth` park)
+   * in a typed {@link InteractionHandle}. The handle's action methods post to
+   * the endpoint the backend declared for that action.
    */
-  async respond(requestId: string, response?: unknown): Promise<void> {
-    await this.ops.respond(requestId, response, response !== undefined);
+  interactionHandle(interaction: Interaction): InteractionHandle {
+    return new InteractionHandle(interaction, (action, body) =>
+      this.ops.postAction(action, body),
+    );
   }
 
   /**
@@ -237,14 +244,16 @@ export function createTrackNamespace(transport: EAKTransport) {
       runNow: async () => asRecord((await api.runNow<unknown>({ token, monitorId })).data),
       streamEvents: (opts) =>
         api.events({ token, monitorId, lastEventId: opts.lastEventId, signal: opts.signal }),
-      respond: async (requestId, response, hasResponse) => {
-        await api.intervene({
+      postAction: async (action, body) => {
+        await transport.webAgentJson(
+          (action.method || "POST") as EAKHttpMethod,
+          action.endpoint,
           token,
-          monitorId,
-          requestId,
-          kind: hasResponse ? "answer" : "skip",
-          ...(hasResponse ? { response } : {}),
-        });
+          {
+            ...(body !== undefined ? { body } : {}),
+            requiredScopes: ["webagent.track:manage"],
+          },
+        );
       },
       listRuns: async (opts) =>
         asRecord((await api.listRuns<unknown>({ token, monitorId, ...opts })).data),

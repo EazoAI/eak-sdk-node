@@ -5,19 +5,31 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { WireEventTypes, WIRE_EVENT_TYPE_VALUES } from "../src/events";
 import { WIRE_TO_SEMANTIC, EAKEventTypes } from "../src/run-events";
+import {
+  InteractionTypes,
+  InteractionStatuses,
+  ActionKinds,
+} from "../src/generated/interaction-types";
 
 // Out-of-band wire types the normalizer handles outside WIRE_TO_SEMANTIC.
 const OUT_OF_BAND = new Set([
   "stream.heartbeat", // → null
   "run.screenshot", // → "screenshot"
   "run.completed", // → "done"
+  "run.interaction", // → "interaction" (carries the typed Interaction object)
 ]);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
 const catalog = JSON.parse(
   readFileSync(join(repo, "src", "generated", "event-catalog.json"), "utf8"),
-) as { version: number; event_types: string[] };
+) as {
+  version: number;
+  event_types: string[];
+  interaction_types: string[];
+  interaction_status: string[];
+  action_kinds: string[];
+};
 
 // ---------------------------------------------------------------------------
 // WireEventTypes (internal) is generated from the vendored catalog, a verbatim
@@ -79,7 +91,6 @@ describe("WireEventTypes ↔ vendored catalog", () => {
   it("surfaces the curated headline types; folds internal churn to progress", () => {
     // Headlines a developer reacts to:
     expect(WIRE_TO_SEMANTIC["run.message"]).toBe("message");
-    expect(WIRE_TO_SEMANTIC["run.input_request"]).toBe("inputRequired");
     expect(WIRE_TO_SEMANTIC["search.results_ready"]).toBe("resultsReady");
     expect(WIRE_TO_SEMANTIC["run.phase_changed"]).toBe("phase");
     expect(WIRE_TO_SEMANTIC["run.section_completed"]).toBe("sectionReady");
@@ -98,6 +109,13 @@ describe("WireEventTypes ↔ vendored catalog", () => {
       "run.cost_update", // cost is on RunResult, not an event
       "search.done", // run ends on run.completed
       "run.recording_finalized",
+      // The old HITL family run.interaction replaces folds to progress while
+      // the backend still dual-emits it (the SDK has no `inputRequired` surface).
+      "run.input_request",
+      "run.input_request_resolved",
+      "run.take_control_expired",
+      "run.user_paused",
+      "run.user_released",
     ]) {
       expect(WIRE_TO_SEMANTIC[wire]).toBe("progress");
     }
@@ -106,12 +124,14 @@ describe("WireEventTypes ↔ vendored catalog", () => {
   it("EAKEventTypes constants are exactly the produced event.type values", () => {
     // EAKEventTypes is the developer-facing vocabulary; it must cover precisely
     // the set of event.type values the normalizer can emit: WIRE_TO_SEMANTIC
-    // values + out-of-band "screenshot"/"done" + the Track monitor-stream types
-    // (triggered/checkCompleted, produced by the monitor.* special cases).
+    // values + out-of-band "screenshot"/"done"/"interaction" + the Track
+    // monitor-stream types (triggered/checkCompleted, produced by the monitor.*
+    // special cases).
     const produced = new Set<string>([
       ...Object.values(WIRE_TO_SEMANTIC),
       "screenshot",
       "done",
+      "interaction",
       "triggered",
       "checkCompleted",
     ]);
@@ -130,5 +150,46 @@ describe("WireEventTypes ↔ vendored catalog", () => {
         stdio: "pipe",
       }),
     ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Interaction discriminators (catalog v2) — the generated InteractionTypes /
+// InteractionStatuses / ActionKinds must mirror the vendored catalog's enums
+// exactly (the SDK half of the drift chain for axis B).
+// ---------------------------------------------------------------------------
+
+describe("interaction discriminators ↔ vendored catalog (v2)", () => {
+  it("catalog is v2 and carries the three interaction enums", () => {
+    expect(catalog.version).toBe(2);
+    expect(Array.isArray(catalog.interaction_types)).toBe(true);
+    expect(Array.isArray(catalog.interaction_status)).toBe(true);
+    expect(Array.isArray(catalog.action_kinds)).toBe(true);
+    expect(catalog.event_types).toContain("run.interaction");
+  });
+
+  it("InteractionTypes covers exactly the catalog interaction_types", () => {
+    expect(new Set(Object.values(InteractionTypes))).toEqual(
+      new Set(catalog.interaction_types),
+    );
+  });
+
+  it("InteractionStatuses covers exactly the catalog interaction_status", () => {
+    expect(new Set(Object.values(InteractionStatuses))).toEqual(
+      new Set(catalog.interaction_status),
+    );
+  });
+
+  it("ActionKinds covers exactly the catalog action_kinds", () => {
+    expect(new Set(Object.values(ActionKinds))).toEqual(
+      new Set(catalog.action_kinds),
+    );
+  });
+
+  it("the five core interaction types are present", () => {
+    const t = new Set<string>(Object.values(InteractionTypes));
+    for (const type of ["site_login", "clarification", "confirmation", "take_control", "wait"]) {
+      expect(t.has(type)).toBe(true);
+    }
   });
 });

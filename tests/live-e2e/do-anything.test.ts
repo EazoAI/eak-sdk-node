@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EAKError } from "../../src";
 import type { JsonObject, RunHandle, RunResult } from "../../src";
 import {
   allowLiveEnvironmentConstraint,
@@ -10,7 +9,6 @@ import {
   doAnythingScopes,
   liveE2EEnabled,
   liveClient,
-  livePrefix,
   openRawEventRecorder,
 } from "./helpers";
 
@@ -146,23 +144,6 @@ describeLiveE2E("live e2e: Do Anything (semantic surface)", () => {
     },
     WAIT_TIMEOUT_MS + 60_000,
   );
-
-  it("run.respond() surfaces a wire error for an unknown input request", async () => {
-    const run = await ensureRun();
-    if (!run) return;
-    const requestId = process.env.EAK_LIVE_DO_ANYTHING_REQUEST_ID || `${livePrefix}-noop`;
-    try {
-      await run.respond(requestId, { approved: true });
-      // Reaching here is only expected when a real pending request id was
-      // injected via EAK_LIVE_DO_ANYTHING_REQUEST_ID.
-    } catch (error) {
-      if (process.env.EAK_LIVE_DO_ANYTHING_REQUEST_ID || !(error instanceof EAKError)) {
-        throw error;
-      }
-      expect(error.status).toBeGreaterThanOrEqual(400);
-      expect(error.code).toBeTruthy();
-    }
-  });
 
   it("run.cancel() is idempotent on a settled run", async () => {
     const run = await ensureRun();

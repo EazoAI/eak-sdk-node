@@ -1,10 +1,14 @@
 import { EAKError, EAKTimeoutError } from "./errors";
 import {
+  InteractionHandle,
+  type Action,
+  type Interaction,
+} from "./interactions";
+import {
   isTerminalRunStatus,
   normalizeRunEvent,
   type RunEvent,
   type RunImage,
-  type RunInputRequiredData,
 } from "./run-events";
 import { isJsonObject, type EAKEvent, type JsonObject } from "./types";
 
@@ -64,8 +68,15 @@ export interface RunWaitOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   onEvent?: (event: RunEvent) => void | Promise<void>;
-  /** Fires on `event.type === "inputRequired"` (HITL). Respond via `run.respond()`. */
-  onInputRequest?: (request: RunInputRequiredData, event: RunEvent) => void | Promise<void>;
+  /**
+   * Fires on `event.type === "interaction"` (HITL). The handle exposes typed
+   * action methods (`interaction.answer(…)` / `confirmSignedIn()` /
+   * `releaseControl()` / …) that post to the action's declared endpoint.
+   */
+  onInteraction?: (
+    interaction: InteractionHandle,
+    event: RunEvent,
+  ) => void | Promise<void>;
   onScreenshot?: (image: RunImage, index: number) => void | Promise<void>;
 }
 
@@ -77,8 +88,12 @@ export interface RunWaitOptions {
 export interface RunWireOps {
   getDetail(): Promise<JsonObject>;
   streamEvents(opts: RunEventsOptions): AsyncIterable<EAKEvent<unknown>>;
-  /** `hasResponse=false` means the caller is skipping the input request. */
-  respond(requestId: string, response: unknown, hasResponse: boolean): Promise<void>;
+  /**
+   * Invoke an interaction action by posting to its declared endpoint. The
+   * Interaction model's `actions[]` carry the endpoint + method, so the SDK
+   * never hard-codes a HITL route — it forwards what the backend declared.
+   */
+  postAction(action: Action, body: JsonObject | undefined): Promise<void>;
   cancel(reason?: string): Promise<JsonObject>;
   /** Products without artifacts leave this undefined → `result.artifacts` is []. */
   listArtifacts?(): Promise<Artifact[]>;
@@ -151,8 +166,8 @@ export class RunHandle<E extends RunEvent = RunEvent> {
           await opts.onEvent?.(event);
           if (event.type === "screenshot") {
             await opts.onScreenshot?.(event.image, screenshotIndex++);
-          } else if (event.type === "inputRequired") {
-            await opts.onInputRequest?.(event.data, event);
+          } else if (event.type === "interaction") {
+            await opts.onInteraction?.(this.interactionHandle(event.data), event);
           }
           if (event.isTerminal) {
             // Fallback only (used if the canonical getDetail() read below
@@ -207,11 +222,15 @@ export class RunHandle<E extends RunEvent = RunEvent> {
   }
 
   /**
-   * Answer a HITL input request. Omitting `response` skips the request —
-   * the agent proceeds without an answer.
+   * Wrap an {@link Interaction} (from `event.data` of an `interaction` event)
+   * in a typed {@link InteractionHandle} bound to this run. The handle's action
+   * methods (`answer` / `confirmSignedIn` / `releaseControl` / …) post to the
+   * endpoint the backend declared for that action.
    */
-  async respond(requestId: string, response?: unknown): Promise<void> {
-    await this.ops.respond(requestId, response, response !== undefined);
+  interactionHandle(interaction: Interaction): InteractionHandle {
+    return new InteractionHandle(interaction, (action, body) =>
+      this.ops.postAction(action, body),
+    );
   }
 
   /**

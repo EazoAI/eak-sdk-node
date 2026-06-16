@@ -131,14 +131,17 @@ const run = await eak.doAnything.run({
 
 const result = await run.wait({
   onScreenshot: (img, i) => fs.writeFileSync(`step-${i}.jpg`, img.bytes),
-  onInputRequest: (req) => openForUser(req.liveUrl), // 登录 / 确认交接
+  onInteraction: (i) => {                 // 登录 / 澄清 / 确认 / 接管
+    if (i.can("confirm_signed_in")) return i.confirmSignedIn();
+    if (i.can("confirm")) return i.confirm();
+  },
 });
 console.log(result.output);
 ```
 
-`run()` 返回一个 `RunHandle`。核心事件（状态、动作、输入请求、完成）始终默认推送；`capture: { screenshots: true }` 开启逐步截图，并且 SDK 已经把图片解码成字节。`wait()` 把任务跑到终态，并从权威 run envelope 结算结果（成本、步数、token 用量都在 `result.raw` 上）。
+`run()` 返回一个 `RunHandle`。核心事件（状态、动作、交互、完成）始终默认推送；`capture: { screenshots: true }` 开启逐步截图，并且 SDK 已经把图片解码成字节。`wait()` 把任务跑到终态，并从权威 run envelope 结算结果（成本、步数、token 用量都在 `result.raw` 上）。
 
-需要逐步控制时，直接消费事件流，`switch (event.type)` 用 `EAKEventTypes` 常量匹配。每个产品的 handle 按产品分型（`eak.deepResearch.run()` 出来是 `RunHandle<DeepResearchEvent>`），TS 里写错产品的事件会编译报错、补全只列本产品的。内部细节（supervisor 编排、子 agent 点击/输入、telemetry）统一折叠成 `EAKEventTypes.Progress`；匹配到 `case` 后 `event.data` 就是该类型的固定形状。45 个原始 wire 类型不导出。
+需要逐步控制时，直接消费事件流，`switch (event.type)` 用 `EAKEventTypes` 常量匹配。每个产品的 handle 按产品分型（`eak.deepResearch.run()` 出来是 `RunHandle<DeepResearchEvent>`），TS 里写错产品的事件会编译报错、补全只列本产品的。内部细节（supervisor 编排、子 agent 点击/输入、telemetry）统一折叠成 `EAKEventTypes.Progress`；匹配到 `case` 后 `event.data` 就是该类型的固定形状。原始 wire 类型不导出。
 
 ```ts
 import { EAKEventTypes } from "@eazo/eak";
@@ -151,8 +154,11 @@ for await (const event of run.events()) {
     case EAKEventTypes.Phase:         console.log(event.data); break; // data 直接就是阶段名(string)
     case EAKEventTypes.SectionReady:  console.log(event.data); break; // data 直接就是章节标题(string)
     case EAKEventTypes.Message:       console.log(event.data.text); break; // 丰富 → { text, role }
-    case EAKEventTypes.InputRequired:                                      // 丰富 → { requestId, prompt, reason, liveUrl? }
-      await run.respond(event.data.requestId, "approve"); break;
+    case EAKEventTypes.Interaction: {                                      // 丰富 → 带类型的 Interaction 对象
+      const i = run.interactionHandle(event.data);                         // 例如大纲审批的 confirmation
+      if (i.can("confirm")) await i.confirm();
+      break;
+    }
     case EAKEventTypes.Done:          console.log(event.data.output); break; // 丰富 → 终态
     // case EAKEventTypes.ResultsReady —— Web Search 才有，写这里 TS 编译报错
   }
@@ -383,7 +389,9 @@ const monitor = await eak.track.create({
 
 await monitor.runNow();
 const ticks = await monitor.runs({ limit: 10 }); // tick 产生的 run 只读列表
-await monitor.respond("req_1", "已重新登录");     // 解锁等待人工介入的监控
+// 监控上的人工介入（如 needs-reauth 的 site_login）会作为 interaction 事件
+// 出现在 monitor.events() 流里，用带类型的 handle 处理：
+//   const i = monitor.interactionHandle(event.data); await i.confirmSignedIn();
 await monitor.update({ schedule: "0 9 * * *" });
 await monitor.delete();
 
@@ -461,12 +469,30 @@ run.id
 run.sessionRef                          // 传回 run({ session }) 复用会话
 await run.status()                      // 刷新并返回当前状态
 run.events(opts?)                       // AsyncIterable<RunEvent>，终态自动结束
-await run.wait({ timeoutMs?, onEvent?, onInputRequest?, onScreenshot? })
-await run.respond(requestId, response?) // HITL 应答；不传 response 即跳过
+await run.wait({ timeoutMs?, onEvent?, onInteraction?, onScreenshot? })
+run.interactionHandle(interaction)      // 带类型的 HITL 句柄（见下方「交互」）
 await run.cancel(reason?)               // 幂等
 ```
 
-`MonitorHandle`（Track）提供 `id`、`get()`、`update()`、`runNow()`、`events()`、`respond()`、`runs()`、`run(runId)`、`delete()`。
+`MonitorHandle`（Track）提供 `id`、`get()`、`update()`、`runNow()`、`events()`、`interactionHandle()`、`runs()`、`run(runId)`、`delete()`。
+
+### 交互（HITL）
+
+当 run 需要用户参与——登录某站、回答澄清、审批计划、接管浏览器、或等待——会发出一个 `interaction` 事件，`event.data` 是带类型的 `Interaction`（用 `type` 判别：`site_login` / `clarification` / `confirmation` / `take_control` / `wait`）。把它包成句柄再调动作方法即可；每个方法会 POST 到交互 `actions[]` 里后端声明的 endpoint，不需要写死路由：
+
+```ts
+for await (const event of run.events()) {
+  if (event.type === "interaction") {
+    const i = run.interactionHandle(event.data);   // event.data 就是 Interaction
+    if (i.type === "clarification" && i.can("answer")) await i.answer("蓝色那个按钮");
+    else if (i.can("confirm")) await i.confirm();
+    else if (i.can("confirm_signed_in")) await i.confirmSignedIn();
+    else if (i.can("release_control")) await i.releaseControl();
+  }
+}
+```
+
+方法：`answer(text)`、`skip()`、`confirm()`、`reject()`、`openLogin()`、`confirmSignedIn()`、`connectControl()`、`refreshControl()`、`releaseControl()`、`retry()`、`switchProfile()`。`i.can(kind)` 判断该交互当前是否提供这个动作；调用后端没声明的方法会抛错（所以「恢复」按钮只有在真能用时才出现）。
 
 ### Wire 级逃生舱
 
@@ -506,7 +532,7 @@ type EAKResponse<T> = {
 //     "checkCompleted" boolean  —— Track:这次检查有没有发现变化
 //   丰富事件 —— event.data 是个小对象:
 //     "message"        { text, role }
-//     "inputRequired"  { requestId, prompt, reason, liveUrl? }
+//     "interaction"    带类型的 Interaction 对象（HITL）—— 见「交互」一节
 //     "screenshot"     { pageUrl?, step? }   + 解码后的图在 event.image
 //     "done"           { output, succeeded, terminalReason }
 // 公共字段:runId、at(ISO 8601)、isTerminal(仅 "done" 为 true)、raw(原始 wire 事件,逃生舱)。
@@ -516,9 +542,9 @@ type EAKResponse<T> = {
 
 | 产品 | `event.type` 集合 |
 |---|---|
-| Do Anything | 核心:`progress` / `message` / `inputRequired` / `screenshot` / `done` |
+| Do Anything | 核心:`progress` / `message` / `interaction` / `screenshot` / `done` |
 | Web Search | 核心 + `resultsReady` |
-| Deep Research | 核心 + `phase` / `sectionReady`（大纲审批走 `inputRequired`） |
+| Deep Research | 核心 + `phase` / `sectionReady`（大纲审批走 `interaction`） |
 | Track（`MonitorHandle`） | 核心 + `monitorCreated` / `triggered` / `checkCompleted` |
 
 断线会带 `Last-Event-ID` 自动重连续传；迭代器在终态事件后自动结束。
