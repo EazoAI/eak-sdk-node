@@ -53,7 +53,8 @@
     "smoke:auth-gum": "pnpm build && node scripts/sdk-auth-gum-smoke.mjs --mock",
     "smoke:auth-gum:live": "pnpm build && EAK_SMOKE_MODE=live node scripts/sdk-auth-gum-smoke.mjs --live",
     "pack:dry-run": "pnpm build && pnpm pack --dry-run",
-    "prepack": "pnpm build"
+    "prepack": "pnpm build",
+    "prepare": "tsup"
   },
   "publishConfig": {
     "access": "public"
