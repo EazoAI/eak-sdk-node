@@ -47,13 +47,13 @@ describe("frozen contract surface", () => {
 
   it("RunHandle has exactly the contract §4 lifecycle methods", () => {
     expect(prototypeMethods(RunHandle)).toEqual(
-      ["cancel", "events", "respond", "status", "wait"].sort(),
+      ["cancel", "events", "interactionHandle", "status", "wait"].sort(),
     );
   });
 
   it("MonitorHandle has exactly the contract §6 methods", () => {
     expect(prototypeMethods(MonitorHandle)).toEqual(
-      ["delete", "events", "get", "respond", "run", "runNow", "runs", "update"].sort(),
+      ["delete", "events", "get", "interactionHandle", "run", "runNow", "runs", "update"].sort(),
     );
   });
 });

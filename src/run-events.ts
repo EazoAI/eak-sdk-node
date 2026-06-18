@@ -1,3 +1,4 @@
+import { normalizeInteraction, type Interaction } from "./interactions";
 import { isJsonObject, type EAKEvent, type JsonObject } from "./types";
 
 /**
@@ -20,10 +21,10 @@ import { isJsonObject, type EAKEvent, type JsonObject } from "./types";
  *       }
  *     }
  *
- * The 45 raw wire types (supervisor orchestration, sub-agent execution,
- * protocol markers) are internal: all that churn folds into
- * `EAKEventTypes.Progress`, and only the handful a developer reacts to get a
- * distinct value. The exact wire string is on `event.raw.event` if ever needed.
+ * The raw wire types (supervisor orchestration, sub-agent execution, protocol
+ * markers) are internal: all that churn folds into `EAKEventTypes.Progress`,
+ * and only the handful a developer reacts to get a distinct value. The exact
+ * wire string is on `event.raw.event` if ever needed.
  */
 export const EAKEventTypes = {
   // --- Core (any product run can emit these) ---
@@ -31,8 +32,8 @@ export const EAKEventTypes = {
   Progress: "progress",
   /** The agent produced a user-facing chat message. */
   Message: "message",
-  /** HITL — the run needs your response to continue (incl. Deep Research outline approval); respond via `run.respond()`. */
-  InputRequired: "inputRequired",
+  /** HITL — a typed interaction needs the user (login / clarification / confirmation / take-control / wait); `event.data` is the full {@link Interaction} object. Act on it via the action methods (`run.interactionHandle(event.data).answer(…)` etc). */
+  Interaction: "interaction",
   /** A live screenshot frame (opt in with `capture: { screenshots: true }`); image on `event.image`. */
   Screenshot: "screenshot",
   /** Terminal — the run finished; outcome + output in `event.data` (cost is on the `RunResult`). */
@@ -57,8 +58,12 @@ export const EAKEventTypes = {
 /** Every `event.type` value. Derived from {@link EAKEventTypes} — the single source. */
 export type EAKEventType = (typeof EAKEventTypes)[keyof typeof EAKEventTypes];
 
-/** Non-terminal, non-screenshot categories (what WIRE_TO_SEMANTIC maps to). */
-export type RunProgressType = Exclude<EAKEventType, "screenshot" | "done">;
+/**
+ * Categories WIRE_TO_SEMANTIC maps to. Excludes the out-of-band cases the
+ * normalizer shapes directly (screenshot / done / interaction) — those don't
+ * go through the generic `shapeData`.
+ */
+export type RunProgressType = Exclude<EAKEventType, "screenshot" | "done" | "interaction">;
 
 /** A decoded screenshot frame. `bytes` are the raw image bytes. */
 export interface RunImage {
@@ -84,14 +89,6 @@ interface RunEventBase {
 
 /** `message` — an assistant/user chat message. */
 export interface RunMessageData { text: string; role: string }
-/** `inputRequired` — HITL ask; respond via `run.respond(requestId, …)`. `liveUrl`
- *  is set for take-control / login handoffs (open it for the user). */
-export interface RunInputRequiredData {
-  requestId: string;
-  reason: string;
-  prompt: string;
-  liveUrl?: string;
-}
 /** `screenshot` — page metadata; the decoded image is on `event.image`. */
 export interface RunScreenshotData { pageUrl?: string; step?: number }
 /** `done` — terminal outcome + final output. (Total cost is on the `RunResult`.) */
@@ -102,7 +99,7 @@ export type RunEvent =
   // `progress` — `event.data` is a human-readable line (string; may be "").
   | (RunEventBase & { type: "progress"; data: string; isTerminal: false })
   | (RunEventBase & { type: "message"; data: RunMessageData; isTerminal: false })
-  | (RunEventBase & { type: "inputRequired"; data: RunInputRequiredData; isTerminal: false })
+  | (RunEventBase & { type: "interaction"; data: Interaction; isTerminal: false })
   | (RunEventBase & { type: "screenshot"; data: RunScreenshotData; image: RunImage; isTerminal: false })
   | (RunEventBase & { type: "done"; data: RunDoneData; isTerminal: true })
   // Web Search — `event.data` is the count of unique results (number).
@@ -125,7 +122,7 @@ export type RunEvent =
 /** Events any product run can emit. */
 export type CoreRunEvent = Extract<
   RunEvent,
-  { type: "progress" | "message" | "inputRequired" | "screenshot" | "done" }
+  { type: "progress" | "message" | "interaction" | "screenshot" | "done" }
 >;
 /** Do Anything — core events only. */
 export type DoAnythingEvent = CoreRunEvent;
@@ -203,9 +200,11 @@ function decodeScreenshotImage(payload: JsonObject): RunImage | undefined {
 //   stream.heartbeat  → null (transport keep-alive, no run event)
 //   run.screenshot    → "screenshot" (or "progress" if the image won't decode)
 //   run.completed     → "done" (terminal; sub-runs demote to progress)
+//   run.interaction   → "interaction" (carries the typed Interaction object)
 const HEARTBEAT = "stream.heartbeat";
 const SCREENSHOT = "run.screenshot";
 const TERMINAL = "run.completed";
+const INTERACTION = "run.interaction";
 
 /**
  * Explicit wire-type → curated `event.type` map. Most wire types are internal
@@ -221,15 +220,21 @@ const TERMINAL = "run.completed";
 export const WIRE_TO_SEMANTIC: Readonly<Record<string, RunProgressType>> = {
   // --- Headline events a developer reacts to ---
   "run.message": "message",
-  "run.input_request": "inputRequired", // incl. Deep Research outline approval
   "search.results_ready": "resultsReady",
   "run.phase_changed": "phase", // Deep Research coarse phase
   "run.section_completed": "sectionReady", // Deep Research section finished
   "run.monitor_created": "monitorCreated", // Do Anything → Track handoff
+  // NB: `run.interaction` is NOT here — it's an out-of-band case in the
+  // normalizer (→ "interaction", carrying the typed Interaction object), like
+  // screenshot/done. The old `run.input_request` / `run.take_control_*` family
+  // it replaces is being removed backend-side; while the backend still lists
+  // them in the catalog (dual-emit window) they fold to progress below — the
+  // SDK no longer has an `inputRequired` surface (clean break).
 
   // --- Internal churn → progress (raw type stays on event.raw.event) ---
   // supervisor lifecycle / planning
   "run.status_changed": "progress",
+  "run.input_request": "progress", // superseded by run.interaction
   "run.input_request_resolved": "progress",
   "run.cost_update": "progress", // cost is surfaced on RunResult, not as an event
   "run.plan_ready": "progress",
@@ -319,15 +324,6 @@ function shapeData(type: RunProgressType, c: JsonObject): RunEvent["data"] {
     // Rich events: event.data is a small object.
     case "message":
       return { text: asString(c.text) ?? "", role: asString(c.role) ?? "" };
-    case "inputRequired": {
-      const liveUrl = asString(c.liveUrl) ?? asString(c.url);
-      return {
-        requestId: asString(c.requestId) ?? "",
-        reason: asString(c.reason) ?? "",
-        prompt: asString(c.prompt) ?? "",
-        ...(liveUrl !== undefined ? { liveUrl } : {}),
-      };
-    }
   }
 }
 
@@ -382,6 +378,16 @@ export function normalizeRunEvent(
       if (pageUrl !== undefined) sData.pageUrl = pageUrl;
       if (step !== undefined) sData.step = step;
       return { ...base, type: "screenshot", data: sData, image, isTerminal: false };
+    }
+  }
+
+  // Typed interaction lifecycle (axis B): the whole Interaction object rides
+  // in the payload; normalizeInteraction camelizes + narrows it. A payload
+  // without a recognized `type` degrades to progress below.
+  if (wireType === INTERACTION) {
+    const interaction = normalizeInteraction(payload);
+    if (interaction) {
+      return { ...base, type: "interaction", data: interaction, isTerminal: false };
     }
   }
 

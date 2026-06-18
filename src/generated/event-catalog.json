@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "description": "SSE event-type catalog — the complete set of wire event types a WebAgent run stream emits. Source of truth: domain.event.types.EventType. Order is canonical (enum definition order). Do not edit by hand; regenerate via `python -m domain.event.catalog_export`.",
   "event_types": [
     "run.status_changed",
@@ -46,6 +46,34 @@
     "run.browser_agent.vision_decision",
     "run.browser_agent.observe",
     "run.browser_agent.page_gate",
-    "run.monitor_created"
+    "run.monitor_created",
+    "run.interaction"
+  ],
+  "interaction_types": [
+    "site_login",
+    "clarification",
+    "confirmation",
+    "take_control",
+    "wait"
+  ],
+  "interaction_status": [
+    "pending",
+    "active",
+    "resolved",
+    "expired",
+    "canceled"
+  ],
+  "action_kinds": [
+    "answer",
+    "skip",
+    "confirm",
+    "reject",
+    "open_login",
+    "confirm_signed_in",
+    "connect_control",
+    "refresh_control",
+    "release_control",
+    "retry",
+    "switch_profile"
   ]
 }

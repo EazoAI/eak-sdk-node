@@ -40,10 +40,34 @@ export type {
   MonitorEvent,
   // Rich-event `event.data` object shapes (simple events' data is a scalar).
   RunMessageData,
-  RunInputRequiredData,
   RunScreenshotData,
   RunDoneData,
 } from "./run-events";
+// --- Interaction model (axis B) — the typed HITL surface (run.interaction). ---
+export { InteractionHandle } from "./interactions";
+export {
+  InteractionTypes,
+  InteractionStatuses,
+  ActionKinds,
+} from "./generated/interaction-types";
+export type {
+  InteractionType,
+  InteractionStatus,
+  ActionKind,
+} from "./generated/interaction-types";
+export type {
+  Interaction,
+  Action,
+  InteractionEvidence,
+  InteractionSite,
+  SiteLoginPayload,
+  ClarificationPayload,
+  ConfirmationPayload,
+  TakeControlPayload,
+  WaitPayload,
+  WaitKind,
+  InteractionPayloadByType,
+} from "./interactions";
 export { MonitorHandle } from "./track";
 export type {
   MonitorEventsOptions,

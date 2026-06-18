@@ -19,7 +19,6 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 const TOKEN = jwt({ webagent_tenant_id: "tenant_1" });
-const BASE = "https://eak.example.com/api/v1/projects/tenant_1";
 
 function jsonResponse(payload: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload), {
@@ -374,7 +373,22 @@ describe("doAnything.run → RunHandle", () => {
     const { client } = makeClient((call) => {
       if (call.pathname.endsWith("/events")) {
         return sseResponse(
-          frame(1, "run.input_request", { request_id: "req_1", live_url: "https://live" }) +
+          frame(1, "run.interaction", {
+            id: "ix_1",
+            type: "clarification",
+            status: "pending",
+            created_at: "2026-06-12T08:00:01+00:00",
+            title: "Which size?",
+            question: "Which screen size?",
+            actions: [
+              {
+                kind: "answer",
+                label: "Answer",
+                method: "POST",
+                endpoint: "/do_anything/runs/run_1/interactions/ix_1/answer",
+              },
+            ],
+          }) +
             frame(2, "run.screenshot", { screenshot_url: SCREENSHOT_DATA_URI, step: 1 }) +
             frame(3, "run.completed", { terminal_reason: "done", output: "lean" }),
         );
@@ -399,20 +413,22 @@ describe("doAnything.run → RunHandle", () => {
       capture: { screenshots: true },
     });
     const shots: Array<{ index: number; bytes: number }> = [];
-    const requests: unknown[] = [];
+    const interactions: Array<{ id: string; type: string; canAnswer: boolean }> = [];
     const result = await run.wait({
       onScreenshot: (image, index) => {
         shots.push({ index, bytes: image.bytes.length });
       },
-      onInputRequest: (request) => {
-        requests.push(request);
+      onInteraction: (interaction) => {
+        interactions.push({
+          id: interaction.id,
+          type: interaction.type,
+          canAnswer: interaction.can("answer"),
+        });
       },
     });
 
     expect(shots).toEqual([{ index: 0, bytes: IMAGE_BYTES.length }]);
-    expect(requests).toEqual([
-      { requestId: "req_1", reason: "", prompt: "", liveUrl: "https://live" },
-    ]);
+    expect(interactions).toEqual([{ id: "ix_1", type: "clarification", canAnswer: true }]);
     expect(result.status).toBe("succeeded");
     expect(result.output).toBe("the full answer"); // settled from detail, not the lean event
     expect(result.artifacts).toEqual([]);
@@ -495,23 +511,69 @@ describe("doAnything.run → RunHandle", () => {
     await expect(run.cancel()).rejects.toBeInstanceOf(EAKPermissionDeniedError);
   });
 
-  it("respond() derives the wire intervene kind from response presence", async () => {
-    const bodies: unknown[] = [];
+  it("interaction action methods post to the action's declared endpoint", async () => {
+    const posts: Array<{ method: string; pathname: string; body: unknown }> = [];
     const { client } = makeClient((call) => {
-      if (call.pathname.endsWith("/intervene")) {
-        bodies.push(call.body);
+      if (call.pathname.includes("/interactions/")) {
+        posts.push({ method: call.method, pathname: call.pathname, body: call.body });
         return jsonResponse({ data: { ok: true } });
+      }
+      if (call.pathname.endsWith("/events")) {
+        return sseResponse(
+          frame(1, "run.interaction", {
+            id: "ix_1",
+            type: "clarification",
+            status: "pending",
+            created_at: "2026-06-12T08:00:01+00:00",
+            title: "Pick one",
+            question: "Which button?",
+            actions: [
+              {
+                kind: "answer",
+                label: "Answer",
+                method: "POST",
+                endpoint: "/do_anything/runs/run_1/interactions/ix_1/answer",
+              },
+              {
+                kind: "skip",
+                label: "Skip",
+                method: "POST",
+                endpoint: "/do_anything/runs/run_1/interactions/ix_1/skip",
+              },
+            ],
+          }) + frame(2, "run.completed", { terminal_reason: "done" }),
+        );
       }
       return jsonResponse({ data: { run_id: "run_1" } });
     });
 
     const run = await client.doAnything.run({ token: TOKEN, prompt: "go" });
-    await run.respond("req_1", "use the blue button");
-    await run.respond("req_2"); // no response = skip
+    let handle: Awaited<ReturnType<typeof run.interactionHandle>> | undefined;
+    for await (const event of run.events()) {
+      if (event.type === "interaction") {
+        handle = run.interactionHandle(event.data);
+      }
+    }
+    if (!handle) throw new Error("expected an interaction event");
 
-    expect(bodies).toEqual([
-      { kind: "answer_input_request", input_request_id: "req_1", response: "use the blue button" },
-      { kind: "skip_input_request", input_request_id: "req_2" },
+    await handle.answer("use the blue button");
+    await handle.skip();
+    // The interaction did NOT declare a confirm action — calling it must throw,
+    // not silently post (closes off "dead recovery affordances").
+    expect(handle.can("confirm")).toBe(false);
+    await expect(handle.confirm()).rejects.toBeInstanceOf(EAKValidationError);
+
+    expect(posts).toEqual([
+      {
+        method: "POST",
+        pathname: "/api/v1/projects/tenant_1/do_anything/runs/run_1/interactions/ix_1/answer",
+        body: { response: "use the blue button" },
+      },
+      {
+        method: "POST",
+        pathname: "/api/v1/projects/tenant_1/do_anything/runs/run_1/interactions/ix_1/skip",
+        body: undefined,
+      },
     ]);
   });
 
@@ -557,12 +619,25 @@ describe("webSearch.run → RunHandle", () => {
     expect(run.sessionRef).toEqual({ sessionId: "sess_ws" });
   });
 
-  it("respond() fails loudly — the wire has no webSearch intervene", async () => {
+  it("an interaction action fails loudly — webSearch runs never request interaction", async () => {
     const { client, calls } = makeClient(() => jsonResponse({ data: { run_id: "ws_1" } }));
     const run = await client.webSearch.run({ token: TOKEN, prompt: "x" });
     const before = calls.length;
-    await expect(run.respond("req_1", "answer")).rejects.toBeInstanceOf(EAKError);
-    expect(calls.length).toBe(before); // failed locally
+    // Synthetic interaction (webSearch never emits one) — invoking its action
+    // surfaces a clean error rather than a confusing 404.
+    const handle = run.interactionHandle({
+      id: "ix_x",
+      type: "clarification",
+      status: "pending",
+      createdAt: "2026-06-12T08:00:01+00:00",
+      title: "t",
+      actions: [
+        { kind: "answer", label: "Answer", method: "POST", endpoint: "/web_search/runs/ws_1/x" },
+      ],
+      payload: { question: "?" },
+    });
+    await expect(handle.answer("answer")).rejects.toBeInstanceOf(EAKError);
+    expect(calls.length).toBe(before); // failed locally, no wire call
   });
 });
 
@@ -590,13 +665,41 @@ describe("deepResearch.run → RunHandle", () => {
     });
   });
 
-  it("respond() fails loudly — deepResearch has no interactive gate", async () => {
-    const { client, calls } = makeClient(() => jsonResponse({ data: { run_id: "dr_1" } }));
+  it("a confirmation interaction's confirm() posts to its declared endpoint", async () => {
+    const posts: Array<{ pathname: string; body: unknown }> = [];
+    const { client } = makeClient((call) => {
+      if (call.pathname.includes("/interactions/")) {
+        posts.push({ pathname: call.pathname, body: call.body });
+        return jsonResponse({ data: { ok: true } });
+      }
+      return jsonResponse({ data: { run_id: "dr_1" } });
+    });
 
     const run = await client.deepResearch.run({ token: TOKEN, prompt: "t" });
-    const before = calls.length;
-    await expect(run.respond("req_1", "approve")).rejects.toBeInstanceOf(EAKValidationError);
-    expect(calls.length).toBe(before); // no /intervene call — there is no gate to answer
+    const handle = run.interactionHandle({
+      id: "ix_dr",
+      type: "confirmation",
+      status: "pending",
+      createdAt: "2026-06-12T08:00:01+00:00",
+      title: "Approve outline?",
+      actions: [
+        {
+          kind: "confirm",
+          label: "Approve",
+          method: "POST",
+          endpoint: "/deep_research/runs/dr_1/interactions/ix_dr/confirm",
+        },
+      ],
+      payload: { summary: "outline" },
+    });
+    await handle.confirm();
+
+    expect(posts).toEqual([
+      {
+        pathname: "/api/v1/projects/tenant_1/deep_research/runs/dr_1/interactions/ix_dr/confirm",
+        body: undefined,
+      },
+    ]);
   });
 
   it("wait() populates result.artifacts with lazy content fetching", async () => {
@@ -730,7 +833,7 @@ describe("track.create → MonitorHandle", () => {
     expect(calls[2].body).toEqual({ check_interval_minutes: 60 });
   });
 
-  it("respond() maps to the monitor intervene wire with answer/skip kinds", async () => {
+  it("a monitor interaction's action posts to its declared endpoint", async () => {
     const { client, calls } = monitorClient();
     const monitor = await client.track.create({
       token: TOKEN,
@@ -738,13 +841,29 @@ describe("track.create → MonitorHandle", () => {
       url: "https://eazo.ai",
     });
 
-    await monitor.respond("req_1", "logged back in");
-    await monitor.respond("req_2");
+    // monitor.needs_login surfaces as a site_login interaction on the stream;
+    // confirmSignedIn() posts to the endpoint the backend declared.
+    const handle = monitor.interactionHandle({
+      id: "ix_m",
+      type: "site_login",
+      status: "active",
+      createdAt: "2026-06-12T08:00:01+00:00",
+      title: "Re-sign in",
+      actions: [
+        {
+          kind: "confirm_signed_in",
+          label: "I signed in",
+          method: "POST",
+          endpoint: "/track/monitors/mon_1/interactions/ix_m/confirm_signed_in",
+        },
+      ],
+      payload: { sites: [], monitorId: "mon_1" },
+    });
+    await handle.confirmSignedIn();
 
-    const intervenes = calls.filter((c) => c.pathname.endsWith("/intervene"));
-    expect(intervenes.map((c) => c.body)).toEqual([
-      { kind: "answer", request_id: "req_1", response: "logged back in" },
-      { kind: "skip", request_id: "req_2" },
+    const action = calls.filter((c) => c.pathname.includes("/interactions/"));
+    expect(action.map((c) => `${c.method} ${c.pathname}`)).toEqual([
+      "POST /api/v1/projects/tenant_1/track/monitors/mon_1/interactions/ix_m/confirm_signed_in",
     ]);
   });
 

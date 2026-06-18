@@ -56,6 +56,7 @@ export const WireEventTypes = {
   RUN_BROWSER_AGENT_OBSERVE: "run.browser_agent.observe",
   RUN_BROWSER_AGENT_PAGE_GATE: "run.browser_agent.page_gate",
   RUN_MONITOR_CREATED: "run.monitor_created",
+  RUN_INTERACTION: "run.interaction",
 } as const;
 
 export type WireEventType = (typeof WireEventTypes)[keyof typeof WireEventTypes];
