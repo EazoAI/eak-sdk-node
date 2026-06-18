@@ -8,6 +8,8 @@ compatible fixes.
 
 ## Unreleased
 
+## 0.3.0 - 2026-06-18
+
 Semantic-layer public surface per the frozen contract. **Breaking** — the
 WebAgent product namespaces are reorganized around handles; the 1:1 wire
 methods moved (no compatibility aliases).
