@@ -401,12 +401,27 @@ const monitor = await eak.track.create({
   prompt: "每分钟监控一次比特币价格。",
 });
 
-await monitor.runNow();
+// 新建的 monitor 先处于 `pending_clarification`（后端把意图对齐成具体规格），
+// 几秒后转为 `active`（意图含糊时可能先发一个 interaction）。runNow()/refine()
+// 都要求 `active`，所以先等它就绪再操作：
+for await (const event of monitor.events()) {
+  if (event.type === "interaction") {
+    const i = monitor.interactionHandle(event.data); // 如 needs-reauth 的 site_login
+    if (i.can("confirm")) await i.confirm();
+    continue;
+  }
+  const { status } = await monitor.get();
+  if (status === "active") break;
+}
+
+await monitor.runNow();                     // 立即触发一次 tick
 const ticks = await monitor.runs({ limit: 10 }); // tick 产生的 run 只读列表
-// 监控上的人工介入（如 needs-reauth 的 site_login）会作为 interaction 事件
-// 出现在 monitor.events() 流里，用带类型的 handle 处理：
-//   const i = monitor.interactionHandle(event.data); await i.confirmSignedIn();
-await monitor.update({ schedule: "0 9 * * *" });
+
+// 用 refine() 改定义（任意字段子集；`prompt` 改意图）。`schedule` 是
+// { kind: "cron", expr } 或 { kind: "interval", intervalSeconds }：
+await monitor.refine({ schedule: { kind: "cron", expr: "0 9 * * *" } });
+await monitor.pause();   // 停掉定时 tick 但不删除
+await monitor.resume();
 await monitor.delete();
 
 // 之后可以用存下来的 id 重连：
@@ -506,7 +521,7 @@ interface RunResult {
 
 每个 `Artifact` 暴露 `id`、`name?`、`mime?`、`sizeBytes?`、`createdAt?` 和 `content(): Promise<Uint8Array>`（懒加载字节）。其余方法都返回下文的 `EAKResponse<T>` 信封,`T` 是该调用的具体载荷类型（例如 `genauth.users.list` → `.data` 上的分页用户列表）。`T` 的精确形状见随包的 `.d.ts`，与后端契约一致。
 
-`MonitorHandle`（Track）提供 `id`、`get()`、`update()`、`runNow()`、`events()`、`interactionHandle()`、`runs()`、`run(runId)`、`delete()`。
+`MonitorHandle`（Track）提供 `id`、`get()`、`pause()`、`resume()`、`refine(patch)`、`runNow()`、`events()`、`interactionHandle()`、`runs()`、`run(runId)`、`delete()`。`runNow()` 和 `refine()` 要求 monitor 处于 `active`——新建的 monitor 会先短暂处于 `pending_clarification`（见上方 Track 示例）。
 
 ### 交互（HITL）
 

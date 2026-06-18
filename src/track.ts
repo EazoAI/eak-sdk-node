@@ -35,6 +35,27 @@ export interface MonitorRunsOptions {
   offset?: number;
 }
 
+/** A monitor's check cadence. */
+export type MonitorSchedule =
+  | { kind: "cron"; expr: string }
+  | { kind: "interval"; intervalSeconds: number };
+
+/**
+ * Fields to change on a monitor via {@link MonitorHandle.refine}. Pass any
+ * subset; at least one is required. `prompt` updates the monitor's intent.
+ */
+export interface MonitorRefinePatch {
+  /** Natural-language intent (maps to the monitor's `intent`). */
+  prompt?: string;
+  schedule?: MonitorSchedule;
+  targetUrls?: string[];
+  extractionSchema?: JsonObject;
+  triggerDsl?: JsonObject;
+  stopConditionDsl?: JsonObject;
+  notifyChannel?: JsonObject | null;
+  [key: string]: unknown;
+}
+
 interface MonitorWireOps {
   get(): Promise<JsonObject>;
   update(input: JsonObject): Promise<JsonObject>;
@@ -63,9 +84,38 @@ export class MonitorHandle {
     return camelizeRecord(await this.ops.get());
   }
 
-  /** Update the monitor definition (camelCase keys accepted). */
-  async update(input: JsonObject): Promise<JsonObject> {
-    return camelizeRecord(await this.ops.update(snakeifyKeys(input)));
+  /**
+   * Pause the monitor — stops scheduled ticks until {@link resume}. The
+   * monitor stays addressable; this is the way to "stop monitoring" without
+   * deleting.
+   */
+  async pause(): Promise<JsonObject> {
+    return camelizeRecord(await this.ops.update({ action: "pause" }));
+  }
+
+  /** Resume a paused monitor. */
+  async resume(): Promise<JsonObject> {
+    return camelizeRecord(await this.ops.update({ action: "resume" }));
+  }
+
+  /**
+   * Change the monitor definition. Pass any subset of fields (at least one);
+   * `prompt` updates the intent and `schedule` is `{ kind: "cron", expr }` or
+   * `{ kind: "interval", intervalSeconds }`. The backend re-validates the
+   * trigger DSL against the schema, so a bad change is rejected, not applied.
+   */
+  async refine(patch: MonitorRefinePatch): Promise<JsonObject> {
+    const { prompt, schedule, ...rest } = patch;
+    const body: JsonObject = snakeifyKeys(rest as JsonObject);
+    if (typeof prompt === "string") body.intent = prompt;
+    if (schedule) body.schedule = normalizeSchedule(schedule);
+    if (Object.keys(body).length === 0) {
+      throw new EAKValidationError(
+        "track refine requires at least one field to change (prompt / schedule / " +
+          "targetUrls / extractionSchema / triggerDsl / stopConditionDsl / notifyChannel)",
+      );
+    }
+    return camelizeRecord(await this.ops.update({ action: "refine", patch: body }));
   }
 
   /** Trigger an immediate tick outside the schedule. */
@@ -100,7 +150,7 @@ export class MonitorHandle {
 
   /**
    * Read-only list of the runs the monitor's ticks produced. Tick runs are
-   * owned by the scheduler — to stop monitoring use `update()` / `delete()`.
+   * owned by the scheduler — to stop monitoring use `pause()` / `delete()`.
    */
   async runs(opts: MonitorRunsOptions = {}): Promise<JsonObject[]> {
     const data = await this.ops.listRuns(opts);
@@ -308,6 +358,14 @@ function normalizeMonitorRun(item: JsonObject): JsonObject {
 
 function normalizeTrackInterveneInput(input: JsonObject): JsonObject {
   return renameKeys(input, { requestId: "request_id" });
+}
+
+/** Normalize a {@link MonitorSchedule} to the backend's wire shape. */
+function normalizeSchedule(schedule: MonitorSchedule): JsonObject {
+  if (schedule.kind === "interval") {
+    return { kind: "interval", interval_seconds: schedule.intervalSeconds };
+  }
+  return { kind: "cron", expr: schedule.expr };
 }
 
 /** Shallow camelCase → snake_case for wire bodies; nested values untouched. */

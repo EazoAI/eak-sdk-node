@@ -820,7 +820,7 @@ describe("track.create → MonitorHandle", () => {
     const detail = await monitor.get();
     expect(detail.checkIntervalMinutes).toBe(30); // camelCase normalization
 
-    await monitor.update({ checkIntervalMinutes: 60 });
+    await monitor.refine({ schedule: { kind: "interval", intervalSeconds: 3600 } });
     await monitor.runNow();
     await monitor.delete();
 
@@ -830,7 +830,35 @@ describe("track.create → MonitorHandle", () => {
       "POST /api/v1/projects/tenant_1/track/monitors/mon_1/run_now",
       "DELETE /api/v1/projects/tenant_1/track/monitors/mon_1",
     ]);
-    expect(calls[2].body).toEqual({ check_interval_minutes: 60 });
+    expect(calls[2].body).toEqual({
+      action: "refine",
+      patch: { schedule: { kind: "interval", interval_seconds: 3600 } },
+    });
+  });
+
+  it("pause/resume/refine send the action-shaped PATCH body the backend FSM expects", async () => {
+    const { client, calls } = monitorClient();
+    const monitor = await client.track.create({
+      token: TOKEN,
+      prompt: "monitor the page for changes",
+      url: "https://eazo.ai",
+    });
+
+    await monitor.pause();
+    await monitor.resume();
+    await monitor.refine({ prompt: "watch the pricing page instead" });
+
+    const patchBodies = calls.filter((c) => c.method === "PATCH").map((c) => c.body);
+    expect(patchBodies).toEqual([
+      { action: "pause" },
+      { action: "resume" },
+      { action: "refine", patch: { intent: "watch the pricing page instead" } },
+    ]);
+
+    // A refine with nothing to change fails locally, before any request.
+    const before = calls.length;
+    await expect(monitor.refine({})).rejects.toMatchObject({ name: "EAKValidationError" });
+    expect(calls.length).toBe(before);
   });
 
   it("a monitor interaction's action posts to its declared endpoint", async () => {
