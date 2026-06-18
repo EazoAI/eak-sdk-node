@@ -11,6 +11,7 @@ import type { RunLimits } from "./do-anything";
 import {
   isJsonObject,
   type EAKEvent,
+  type EAKHttpMethod,
   type EAKResponse,
   type EAKTransport,
   type JsonObject,
@@ -155,13 +156,15 @@ export function createDeepResearchNamespace(transport: EAKTransport) {
       getDetail: async () => asRecord((await api.get<unknown>({ token, runId })).data),
       streamEvents: (opts) =>
         api.events({ token, runId, lastEventId: opts.lastEventId, signal: opts.signal }),
-      respond: async () => {
-        // DeepResearch runs have no human-in-the-loop gate — PLAN flows
-        // straight to GATHER, so a run never parks on an input request and
-        // there is nothing to respond to.
-        throw new EAKValidationError(
-          "deepResearch runs have no interactive gate — there is no input " +
-            "request to respond to",
+      postAction: async (action, body) => {
+        await transport.webAgentJson(
+          (action.method || "POST") as EAKHttpMethod,
+          action.endpoint,
+          token,
+          {
+            ...(body !== undefined ? { body } : {}),
+            requiredScopes: ["webagent.deep_research:manage"],
+          },
         );
       },
       cancel: async () => asRecord((await api.cancel<unknown>({ token, runId })).data),

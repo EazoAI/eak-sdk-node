@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EAKError } from "../../src";
 import type { JsonObject, MonitorHandle } from "../../src";
 import {
   allowLiveEnvironmentConstraint,
@@ -222,22 +221,6 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
     expect(typeof first.id).toBe("string");
     const detail = await monitor.run(String(first.id));
     expect(detail.id).toBe(first.id);
-  });
-
-  it("monitor.respond() rejects an unknown HITL request with a wire error", async () => {
-    const monitor = await ensureMonitor();
-    if (!monitor) return;
-    // No HITL park is pending on this healthy monitor — answering a
-    // nonexistent request must surface a clean wire error, not hang.
-    try {
-      await monitor.respond("sdk-live-nonexistent-request", { acknowledged: true });
-    } catch (error) {
-      if (!(error instanceof EAKError)) throw error;
-      expect(error.status).toBeGreaterThanOrEqual(400);
-      return;
-    }
-    // Some backends accept-and-ignore unknown requests; reaching here without
-    // a hang is the assertion.
   });
 
   // Escape-hatch smoke: the wire layer (api.*) must keep working for advanced

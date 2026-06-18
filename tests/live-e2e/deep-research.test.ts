@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EAKValidationError } from "../../src";
 import type { JsonObject, RunHandle, RunResult } from "../../src";
 import {
   allowLiveEnvironmentConstraint,
@@ -113,12 +112,6 @@ describeLiveE2E("live e2e: Deep Research (semantic surface)", () => {
       label: "deepResearch run.events",
     });
     expect(events.some((event) => event.runId === run.id)).toBe(true);
-  });
-
-  it("run.respond() fails loudly — deepResearch has no interactive gate", async () => {
-    const run = await ensureRun();
-    if (!run) return;
-    await expect(run.respond("any-request", "approve")).rejects.toThrowError(EAKValidationError);
   });
 
   it(

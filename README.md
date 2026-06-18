@@ -136,7 +136,10 @@ const run = await eak.doAnything.run({
 
 const result = await run.wait({
   onScreenshot: (img, i) => fs.writeFileSync(`step-${i}.jpg`, img.bytes),
-  onInputRequest: (req) => openForUser(req.liveUrl), // login / confirm handoff
+  onInteraction: (i) => {                 // login / clarify / confirm / take-control
+    if (i.can("confirm_signed_in")) return i.confirmSignedIn();
+    if (i.can("confirm")) return i.confirm();
+  },
 });
 console.log(result.output);
 ```
@@ -151,7 +154,7 @@ console.log(result.output);
 > match a `case`, `event.data` has a fixed shape — a bare value for simple
 > events (`progress` → a string line, `resultsReady` → a number) and a small
 > object for rich ones (`done` → `{ output, succeeded, terminalReason }`). The
-> 45 raw wire types are not exported.
+> raw wire types are not exported.
 
 ```ts
 import { EAKEventTypes } from "@eazo/eak";
@@ -164,8 +167,11 @@ for await (const event of run.events()) {
     case EAKEventTypes.Phase:         console.log(event.data); break; // data IS the phase name (string)
     case EAKEventTypes.SectionReady:  console.log(event.data); break; // data IS the section title (string)
     case EAKEventTypes.Message:       console.log(event.data.text); break; // rich → { text, role }
-    case EAKEventTypes.InputRequired:                                      // rich → { requestId, prompt, reason, liveUrl? }
-      await run.respond(event.data.requestId, "approve"); break;
+    case EAKEventTypes.Interaction: {                                      // rich → the typed Interaction object
+      const i = run.interactionHandle(event.data);                         // e.g. an outline-approval confirmation
+      if (i.can("confirm")) await i.confirm();
+      break;
+    }
     case EAKEventTypes.Done:          console.log(event.data.output); break;  // rich → terminal
     // case EAKEventTypes.ResultsReady — Web Search only → compile error here
   }
@@ -403,7 +409,9 @@ const monitor = await eak.track.create({
 
 await monitor.runNow();
 const ticks = await monitor.runs({ limit: 10 }); // read-only tick run views
-await monitor.respond("req_1", "logged back in"); // unlock a HITL park
+// HITL on a monitor (e.g. a needs-reauth site_login) arrives as an
+// `interaction` event on monitor.events(); act on it via the typed handle:
+//   const i = monitor.interactionHandle(event.data); await i.confirmSignedIn();
 await monitor.update({ schedule: "0 9 * * *" });
 await monitor.delete();
 
@@ -481,12 +489,39 @@ run.id
 run.sessionRef                          // pass back to run({ session }) to reuse the session
 await run.status()                      // refresh and return the current state
 run.events(opts?)                       // AsyncIterable<RunEvent>, ends at the terminal event
-await run.wait({ timeoutMs?, onEvent?, onInputRequest?, onScreenshot? })
-await run.respond(requestId, response?) // HITL answer; omit response to skip
+await run.wait({ timeoutMs?, onEvent?, onInteraction?, onScreenshot? })
+run.interactionHandle(interaction)      // typed HITL handle (see Interactions below)
 await run.cancel(reason?)               // idempotent
 ```
 
-`MonitorHandle` (Track) exposes `id`, `get()`, `update()`, `runNow()`, `events()`, `respond()`, `runs()`, `run(runId)`, and `delete()`.
+`MonitorHandle` (Track) exposes `id`, `get()`, `update()`, `runNow()`, `events()`, `interactionHandle()`, `runs()`, `run(runId)`, and `delete()`.
+
+### Interactions (HITL)
+
+When a run needs the user — sign in to a site, answer a clarification, approve a
+plan, take over the browser, or wait — it emits an `interaction` event whose
+`event.data` is a typed `Interaction` (discriminated by `type`: `site_login` /
+`clarification` / `confirmation` / `take_control` / `wait`). Wrap it in a handle
+and call the action methods; each posts to the endpoint the backend declared in
+the interaction's `actions[]`, so you never hard-code a route:
+
+```ts
+for await (const event of run.events()) {
+  if (event.type === "interaction") {
+    const i = run.interactionHandle(event.data);   // event.data is the Interaction
+    if (i.type === "clarification" && i.can("answer")) await i.answer("the blue button");
+    else if (i.can("confirm")) await i.confirm();
+    else if (i.can("confirm_signed_in")) await i.confirmSignedIn();
+    else if (i.can("release_control")) await i.releaseControl();
+  }
+}
+```
+
+Methods: `answer(text)`, `skip()`, `confirm()`, `reject()`, `openLogin()`,
+`confirmSignedIn()`, `connectControl()`, `refreshControl()`, `releaseControl()`,
+`retry()`, `switchProfile()`. `i.can(kind)` reports whether the interaction
+currently offers that action; calling a method the backend did NOT declare
+throws (so a "recovery" button only exists when it actually works).
 
 ### Wire-Level Escape Hatch
 
@@ -528,7 +563,7 @@ that type:
 //     "checkCompleted" boolean  — Track: did the scheduled check find a change
 //   RICH events — event.data is a small object:
 //     "message"        { text, role }
-//     "inputRequired"  { requestId, prompt, reason, liveUrl? }
+//     "interaction"    the typed Interaction object (HITL) — see Interactions
 //     "screenshot"     { pageUrl?, step? }   + the decoded image on event.image
 //     "done"           { output, succeeded, terminalReason }
 // Common to every event: runId, at (ISO 8601), isTerminal (true only for "done"),
@@ -539,9 +574,9 @@ Each product handle is typed to its own subset (分型):
 
 | Product | `event.type` set |
 |---|---|
-| Do Anything | core: `progress` / `message` / `inputRequired` / `screenshot` / `done` |
+| Do Anything | core: `progress` / `message` / `interaction` / `screenshot` / `done` |
 | Web Search | core + `resultsReady` |
-| Deep Research | core + `phase` / `sectionReady` (the outline gate arrives as `inputRequired`) |
+| Deep Research | core + `phase` / `sectionReady` (the outline gate arrives as an `interaction`) |
 | Track (`MonitorHandle`) | core + `monitorCreated` / `triggered` / `checkCompleted` |
 
 Dropped connections reconnect automatically with `Last-Event-ID` catch-up; the iterator ends at the run's terminal (`done`) event.

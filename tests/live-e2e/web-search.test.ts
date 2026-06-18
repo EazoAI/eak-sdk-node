@@ -141,14 +141,6 @@ describeLiveE2E("live e2e: Web Search (semantic surface)", () => {
     expect(recordedFile && fs.existsSync(recordedFile)).toBe(true);
   });
 
-  it("run.respond() fails loudly — webSearch never requests input", async () => {
-    const run = await ensureRun();
-    if (!run) return;
-    await expect(run.respond("nonexistent-request")).rejects.toThrowError(
-      /never request input/,
-    );
-  });
-
   it("run.cancel() is idempotent on a settled run", async () => {
     const run = await ensureRun();
     if (!run) return;

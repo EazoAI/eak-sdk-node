@@ -7,3 +7,4 @@ coverage/
 examples/
 .secrets/
 tests/eak-smoke*
+.DS_Store

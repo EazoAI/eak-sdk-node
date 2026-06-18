@@ -9,6 +9,7 @@ import type { DoAnythingEvent } from "./run-events";
 import {
   isJsonObject,
   type EAKEvent,
+  type EAKHttpMethod,
   type EAKResponse,
   type EAKTransport,
   type JsonObject,
@@ -251,13 +252,16 @@ export function createDoAnythingNamespace(transport: EAKTransport) {
           // Skip screenshot rows in backfill when the caller did not opt in.
           includeScreenshots: capture?.screenshots ? undefined : false,
         }),
-      respond: async (requestId, response, hasResponse) => {
-        await api.intervene({
+      postAction: async (action, body) => {
+        await transport.webAgentJson(
+          (action.method || "POST") as EAKHttpMethod,
+          action.endpoint,
           token,
-          runId,
-          requestId,
-          ...(hasResponse ? { response } : {}),
-        });
+          {
+            ...(body !== undefined ? { body } : {}),
+            requiredScopes: ["webagent.do_anything:manage"],
+          },
+        );
       },
       cancel: async (reason) =>
         asRecord(
