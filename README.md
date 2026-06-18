@@ -48,6 +48,14 @@ Requirements:
 
 You do not pass `tenantId` during normal SDK initialization. The AK/SK is already bound to the tenant and application boundary in EAK.
 
+The package ships both ESM and CommonJS builds with TypeScript types, so either
+import style works:
+
+```ts
+import { EazoAgentKit } from "@eazo/eak";        // ESM / TypeScript
+const { EazoAgentKit } = require("@eazo/eak");    // CommonJS
+```
+
 ## AI Skill
 
 EAK can also be exposed to AI coding tools through a Skill package, so Codex, Claude Code, or internal Agents can follow the same authorization model.
@@ -144,7 +152,7 @@ const result = await run.wait({
 console.log(result.output);
 ```
 
-`run()` returns a `RunHandle` typed to the product (分型): `eak.deepResearch.run()` is a `RunHandle<DeepResearchEvent>`, so its events are narrowed to what Deep Research actually emits. `capture: { screenshots: true }` opts into per-step screenshots, decoded to bytes for you. `wait()` drives the run to its terminal state and settles the result (`result.raw` carries cost, step counts, token usage).
+`run()` returns a `RunHandle` typed to the product: `eak.deepResearch.run()` is a `RunHandle<DeepResearchEvent>`, so its events are narrowed to what Deep Research actually emits. `capture: { screenshots: true }` opts into per-step screenshots, decoded to bytes for you. `wait()` drives the run to its terminal state and settles the result (`result.raw` carries cost, step counts, token usage).
 
 > **Best practice — match `event.type` against the `EAKEventTypes` constants.**
 > Each product handle is typed to its own event set, so in TypeScript a case
@@ -226,6 +234,20 @@ In silent mode, `delegateToken` binds four things:
 - the token expiry and audit context
 
 Silent product calls receive `token: delegation.data.token`. If that token is an EAK delegation token, the SDK exchanges it internally for the correct GUMem or WebAgent product access token before calling the downstream service.
+
+**Input shape.** `delegateToken` is discriminated by `mode`:
+
+- **Silent** (`mode: "silent"`, the default) — acts for one end user, so a user
+  is **required**: pass `user: { id: <genauthUserId> }` (preferred) or the
+  deprecated top-level `userId`. Omitting it throws `EAKValidationError`
+  locally before any request. Authorize with the `products` sugar and/or
+  explicit `scopes`.
+- **Interactive** (`mode: "interactive"`) — pass `redirectUri`, `state`,
+  `agent`, `scopes` and **no** user (EAK Console resolves the login during
+  authorization). Returns `data.authorizationUrl`, not a token; complete it
+  server-side with `completeDelegateToken({ grantId, code, state })`.
+
+`agent` is optional and defaults to `"sdk"`.
 
 ```ts
 const delegation = await eak.delegateToken({
@@ -462,7 +484,17 @@ const eak = new EazoAgentKit({
 | `secretKey` | `string` | Yes | EAK secret key from EAK Console. |
 | `host` | `string` | No | Optional EAK Console/SDK gateway override for private or local deployments. |
 | `fetch` | `typeof fetch` | No | Custom transport implementation. |
-| `timeoutMs` | `number` | No | Request timeout. Defaults to `30000`. |
+| `timeoutMs` | `number` | No | Per-request timeout (connect + response headers). Defaults to `30000`. |
+
+> **`timeoutMs` does not bound a long-running run.** It applies to individual
+> one-shot HTTP requests (delegation, `status()`, a single POST). The live
+> event stream (`events()` / `wait()`) is **not** cut off by it — once the
+> stream's response headers arrive the per-request timer is cleared, so a
+> Deep Research run that takes an hour streams fine under the default 30s
+> client timeout. To bound how long you wait, pass `wait({ timeoutMs })` —
+> with no value, `wait()` runs until the run reaches a terminal state. A
+> `wait()` timeout does not stop the run; it keeps executing server-side and
+> you can `attach()` to it again.
 
 `EAK` is also exported as a short alias:
 
@@ -494,6 +526,26 @@ run.interactionHandle(interaction)      // typed HITL handle (see Interactions b
 await run.cancel(reason?)               // idempotent
 ```
 
+`await run.wait(...)` settles to a `RunResult`:
+
+```ts
+interface RunResult {
+  runId: string;
+  status: "succeeded" | "failed" | "canceled";  // delivery status of the run
+  output?: unknown;            // final answer / payload (shape is task-specific)
+  artifacts: Artifact[];       // deliverables — deepResearch reports; [] for the others
+  isTaskSuccessful?: boolean;  // did the task achieve its goal (distinct from `status`)
+  terminalReason?: string;
+  raw: JsonObject;             // full wire envelope — cost, step counts, token usage
+}
+```
+
+Each `Artifact` exposes `id`, `name?`, `mime?`, `sizeBytes?`, `createdAt?`, and
+`content(): Promise<Uint8Array>` (lazy byte download). Every other method returns the `EAKResponse<T>` envelope below; `T`
+is the typed payload for that call (e.g. `genauth.users.list` → a paged user
+list on `.data`). The exact `T` shapes live in the bundled `.d.ts` and follow
+the backend contract.
+
 `MonitorHandle` (Track) exposes `id`, `get()`, `update()`, `runNow()`, `events()`, `interactionHandle()`, `runs()`, `run(runId)`, and `delete()`.
 
 ### Interactions (HITL)
@@ -522,6 +574,22 @@ Methods: `answer(text)`, `skip()`, `confirm()`, `reject()`, `openLogin()`,
 `retry()`, `switchProfile()`. `i.can(kind)` reports whether the interaction
 currently offers that action; calling a method the backend did NOT declare
 throws (so a "recovery" button only exists when it actually works).
+
+The discriminant strings used above are also exported as constants so you can
+avoid bare literals: `InteractionTypes` (`site_login` / `clarification` /
+`confirmation` / `take_control` / `wait`), `InteractionStatuses`, and
+`ActionKinds` (the `i.can(...)` action names). Authorization scope strings have
+the same treatment — `EAKScopes` (every individual scope), `EAKProductScopes`
+(the per-product `read`+`manage` pairs the `products` sugar expands to), and
+`EAKScopeBundles` (curated bundles). Use them in place of hand-typed strings:
+
+```ts
+import { InteractionTypes, ActionKinds, EAKScopes } from "@eazo/eak";
+
+if (i.type === InteractionTypes.Clarification && i.can(ActionKinds.answer)) {
+  await i.answer("the blue button");
+}
+```
 
 ### Wire-Level Escape Hatch
 
@@ -570,7 +638,7 @@ that type:
 // raw (the original wire event — escape hatch).
 ```
 
-Each product handle is typed to its own subset (分型):
+Each product handle is typed to its own subset:
 
 | Product | `event.type` set |
 |---|---|
@@ -595,22 +663,50 @@ type EAKEvent<T = unknown> = {
 
 All SDK errors inherit from `EAKError` and expose `code`, `status`, `requestId`, `traceId`, `auditId`, `retryable`, and the original response `body` when available. `code` is typed as `EAKErrorCode` (the known SDK / backend codes plus `(string & {})`), so you get literal autocomplete and can `switch (err.code)` over the known set while still tolerating new backend codes.
 
+All error classes are exported and can be matched with `instanceof`:
+
+| Class | Fires when | Typical recovery |
+| --- | --- | --- |
+| `EAKValidationError` | Local input check failed before any request (bad scope string, silent delegation missing a user). | Fix the call — the message states the correct form. |
+| `EAKAuthError` | AK/SK signing rejected by EAK (bad/rotated credentials). | Check `accessKey` / `secretKey`. |
+| `EAKPermissionDeniedError` | The delegation token lacks a required scope (403). | Re-`delegateToken` with the missing scope. |
+| `EAKTokenExpiredError` | The delegation / product token expired. | Mint a fresh token and retry. |
+| `EAKDelegationRequiredError` | A product call was made without `token`, or with a raw token the gateway won't accept directly. | Pass `delegation.data.token` to the product call. |
+| `EAKRateLimitError` | Rate limited (429). | Back off and retry (`retryable === true`). |
+| `EAKTimeoutError` | A request (or `wait({ timeoutMs })`) timed out. | Retry; the run keeps executing server-side — `attach()` to it. |
+| `EAKUpstreamError` | A downstream service failed (5xx / upstream exchange failure). | Back off and retry when `retryable`. |
+| `EAKError` | Base class / any other code. | Inspect `err.code`. |
+
+The SDK does **not** auto-retry. `err.retryable` tells you whether a retry could
+succeed; you own the backoff.
+
 ```ts
 import {
+  EAKDelegationRequiredError,
   EAKPermissionDeniedError,
   EAKRateLimitError,
   EAKTimeoutError,
+  EAKTokenExpiredError,
+  EAKUpstreamError,
 } from "@eazo/eak";
 
 try {
   await eak.webSearch.run({ token, prompt: "EAK SDK" });
 } catch (error) {
-  if (error instanceof EAKPermissionDeniedError) {
-    // Request a new delegated token with the missing scope.
+  if (
+    error instanceof EAKPermissionDeniedError ||
+    error instanceof EAKTokenExpiredError ||
+    error instanceof EAKDelegationRequiredError
+  ) {
+    // Re-mint a delegation token (add the missing scope / refresh expiry) and retry.
   }
 
-  if (error instanceof EAKRateLimitError || error instanceof EAKTimeoutError) {
-    // Retry with backoff when your product flow allows it.
+  if (
+    error instanceof EAKRateLimitError ||
+    error instanceof EAKTimeoutError ||
+    error instanceof EAKUpstreamError
+  ) {
+    // Transient — back off and retry when `error.retryable` is true.
   }
 
   throw error;

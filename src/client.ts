@@ -866,6 +866,19 @@ function normalizeDelegateTokenInput(input: DelegateTokenInput): JsonObject {
   if (!body.userId && isJsonObject(input.user) && typeof input.user.id === "string") {
     body.userId = input.user.id;
   }
+  // Silent delegation acts for a specific end user, so a user id is required.
+  // Fail locally with a precise message instead of letting an un-attributed
+  // request reach the gateway and come back as a confusing signing/auth error
+  // (interactive mode is exempt — the EAK Console resolves the login during
+  // authorization). The TS overloads already enforce this; the guard is for
+  // plain-JS callers where types don't apply.
+  if (input.mode !== "interactive" && !body.userId) {
+    throw new EAKValidationError(
+      "delegateToken: silent mode requires a user — pass `user: { id: <genauthUserId> }` " +
+        "(or the deprecated top-level `userId`). Interactive mode (`mode: \"interactive\"`) " +
+        "does not need one.",
+    );
+  }
   body.agent = input.agent ?? "sdk";
   body.scopes = resolveDelegationScopes(input.scopes, input.products);
   delete body.products;

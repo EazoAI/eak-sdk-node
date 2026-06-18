@@ -8,6 +8,31 @@ compatible fixes.
 
 ## Unreleased
 
+## 0.3.2 - 2026-06-18
+
+### Fixed
+
+- `delegateToken` in silent mode now fails locally with `EAKValidationError`
+  when no `user` / `userId` is given, instead of letting an un-attributed
+  request reach the gateway and surface as a confusing signing error. The TS
+  overloads already enforced this; the guard covers plain-JS callers.
+
+### Documentation
+
+README pass driven by an external review:
+
+- Document all exported error classes (`EAKAuthError`, `EAKTokenExpiredError`,
+  `EAKUpstreamError`, `EAKDelegationRequiredError`, …), not just three; note
+  that the SDK does not auto-retry and `retryable` is yours to act on.
+- Clarify that `client.timeoutMs` bounds individual requests, not the live
+  run stream — long runs stream fine; bound waiting with `wait({ timeoutMs })`.
+- Spell out the `delegateToken` input shape (silent requires `user: { id }`;
+  interactive needs none).
+- Point at the exported constants (`InteractionTypes`, `InteractionStatuses`,
+  `ActionKinds`, `EAKScopes`, `EAKProductScopes`) instead of bare literals.
+- Document the `RunResult` / `Artifact` shapes returned by `wait()`.
+- Note the dual ESM/CommonJS builds; remove stray Chinese from the English README.
+
 ## 0.3.1 - 2026-06-18
 
 Documentation-only release; no SDK code changes.

@@ -43,6 +43,13 @@ yarn add @eazo/eak
 
 正常初始化 SDK 时不需要传 `tenantId`。EAK AK/SK 已经在服务端绑定了租户和应用边界。
 
+包同时发布 ESM 和 CommonJS 两套构建（都带 TypeScript 类型），两种引入方式都可用：
+
+```ts
+import { EazoAgentKit } from "@eazo/eak";        // ESM / TypeScript
+const { EazoAgentKit } = require("@eazo/eak");    // CommonJS
+```
+
 ## AI Skill
 
 `@eazo/eak` 不应该只给人读文档，也应该让 AI 工具能直接理解 SDK 的能力边界。可以通过 Skill 让 Codex、Claude Code 或内部 Agent 按同一套授权模型调用 EAK。
@@ -206,6 +213,13 @@ silent 模式下，`delegateToken` 绑定四件事：
 - token 过期时间与审计上下文。
 
 silent 产品能力方法传入 `token: delegation.data.token`。如果这个 token 是 EAK delegation token，SDK 会在内部换成 GUMem 或 WebAgent 所需的产品 access token，再调用下游服务。
+
+**入参形态。** `delegateToken` 用 `mode` 判别：
+
+- **Silent**（`mode: "silent"`，默认）——代表某个终端用户,所以 user **必填**：传 `user: { id: <genauthUserId> }`（推荐）或已废弃的顶层 `userId`。不传会在请求发出前本地抛 `EAKValidationError`。授权用 `products` 语法糖和/或显式 `scopes`。
+- **Interactive**（`mode: "interactive"`）——传 `redirectUri`、`state`、`agent`、`scopes`，**不传** user（EAK Console 在授权时解析登录）。返回 `data.authorizationUrl` 而非 token；在服务端用 `completeDelegateToken({ grantId, code, state })` 完成。
+
+`agent` 可选，默认 `"sdk"`。
 
 ```ts
 const delegation = await eak.delegateToken({
@@ -442,7 +456,9 @@ const eak = new EazoAgentKit({
 | `secretKey` | `string` | 是 | EAK Console 创建的 secret key。 |
 | `host` | `string` | 否 | 私有化或本地部署时可选的 EAK Console/SDK 网关覆盖地址。 |
 | `fetch` | `typeof fetch` | 否 | 自定义传输实现。 |
-| `timeoutMs` | `number` | 否 | 请求超时时间，默认 `30000`。 |
+| `timeoutMs` | `number` | 否 | 单次请求超时（连接 + 响应头），默认 `30000`。 |
+
+> **`timeoutMs` 不会限制长任务。** 它只作用于单次一次性 HTTP 请求（委托、`status()`、单个 POST）。事件流（`events()` / `wait()`）**不受它约束**——流的响应头一到，这个单次计时器就被清掉了,所以一个跑一小时的 Deep Research 在默认 30s 客户端超时下也能正常流式。要限制等待时长用 `wait({ timeoutMs })`；不传则 `wait()` 一直等到终态。`wait()` 超时**不会停止 run**——它在服务端继续跑，可以再 `attach()` 回去。
 
 兼容导出：
 
@@ -474,6 +490,22 @@ run.interactionHandle(interaction)      // 带类型的 HITL 句柄（见下方�
 await run.cancel(reason?)               // 幂等
 ```
 
+`await run.wait(...)` 结算成一个 `RunResult`：
+
+```ts
+interface RunResult {
+  runId: string;
+  status: "succeeded" | "failed" | "canceled";  // run 的交付状态
+  output?: unknown;            // 最终答案 / 载荷（形状随任务而定）
+  artifacts: Artifact[];       // 交付物——deepResearch 报告；其它产品为 []
+  isTaskSuccessful?: boolean;  // 任务是否达成目标（与 status 不同）
+  terminalReason?: string;
+  raw: JsonObject;             // 完整 wire envelope——成本、步数、token 用量
+}
+```
+
+每个 `Artifact` 暴露 `id`、`name?`、`mime?`、`sizeBytes?`、`createdAt?` 和 `content(): Promise<Uint8Array>`（懒加载字节）。其余方法都返回下文的 `EAKResponse<T>` 信封,`T` 是该调用的具体载荷类型（例如 `genauth.users.list` → `.data` 上的分页用户列表）。`T` 的精确形状见随包的 `.d.ts`，与后端契约一致。
+
 `MonitorHandle`（Track）提供 `id`、`get()`、`update()`、`runNow()`、`events()`、`interactionHandle()`、`runs()`、`run(runId)`、`delete()`。
 
 ### 交互（HITL）
@@ -493,6 +525,16 @@ for await (const event of run.events()) {
 ```
 
 方法：`answer(text)`、`skip()`、`confirm()`、`reject()`、`openLogin()`、`confirmSignedIn()`、`connectControl()`、`refreshControl()`、`releaseControl()`、`retry()`、`switchProfile()`。`i.can(kind)` 判断该交互当前是否提供这个动作；调用后端没声明的方法会抛错（所以「恢复」按钮只有在真能用时才出现）。
+
+上面用到的判别字符串也都导出成了常量，避免裸写字面量：`InteractionTypes`（`site_login` / `clarification` / `confirmation` / `take_control` / `wait`）、`InteractionStatuses`、`ActionKinds`（`i.can(...)` 的动作名）。授权 scope 同样有：`EAKScopes`（每个单独 scope）、`EAKProductScopes`（`products` 语法糖展开成的 per-product `read`+`manage` 对）、`EAKScopeBundles`（精选 bundle）。用它们代替手写字符串：
+
+```ts
+import { InteractionTypes, ActionKinds, EAKScopes } from "@eazo/eak";
+
+if (i.type === InteractionTypes.Clarification && i.can(ActionKinds.answer)) {
+  await i.answer("蓝色那个按钮");
+}
+```
 
 ### Wire 级逃生舱
 
@@ -563,22 +605,49 @@ type EAKEvent<T = unknown> = {
 
 所有 SDK 错误都继承自 `EAKError`，并尽量暴露 `code`、`status`、`requestId`、`traceId`、`auditId`、`retryable` 和原始响应 `body`。`code` 的类型是 `EAKErrorCode`（已知 SDK / 后端 code 加 `(string & {})`），既有字面量自动补全、可对已知集做 `switch (err.code)` 穷尽处理，又兼容后端新增的 code。
 
+所有错误类都已导出，可用 `instanceof` 匹配：
+
+| 类 | 触发时机 | 典型处理 |
+| --- | --- | --- |
+| `EAKValidationError` | 请求发出前的本地校验失败（scope 字符串格式错、silent 委托缺 user）。 | 按消息修正调用——消息里给出正确写法。 |
+| `EAKAuthError` | AK/SK 签名被 EAK 拒绝（凭据错误/已轮换）。 | 检查 `accessKey` / `secretKey`。 |
+| `EAKPermissionDeniedError` | delegation token 缺所需 scope（403）。 | 带上缺失 scope 重新 `delegateToken`。 |
+| `EAKTokenExpiredError` | delegation / 产品 token 过期。 | 重新 mint token 再试。 |
+| `EAKDelegationRequiredError` | 产品调用没带 `token`，或带的是网关不接受的裸 token。 | 把 `delegation.data.token` 传给产品调用。 |
+| `EAKRateLimitError` | 被限流（429）。 | 退避后重试（`retryable === true`）。 |
+| `EAKTimeoutError` | 请求（或 `wait({ timeoutMs })`）超时。 | 重试；run 仍在服务端执行，可 `attach()` 回去。 |
+| `EAKUpstreamError` | 下游服务失败（5xx / 上游换 token 失败）。 | `retryable` 时退避后重试。 |
+| `EAKError` | 基类 / 其它 code。 | 看 `err.code`。 |
+
+SDK **不会自动重试**。`err.retryable` 告诉你重试是否可能成功，退避由你自己实现。
+
 ```ts
 import {
+  EAKDelegationRequiredError,
   EAKPermissionDeniedError,
   EAKRateLimitError,
   EAKTimeoutError,
+  EAKTokenExpiredError,
+  EAKUpstreamError,
 } from "@eazo/eak";
 
 try {
   await eak.webSearch.run({ token, prompt: "EAK SDK" });
 } catch (error) {
-  if (error instanceof EAKPermissionDeniedError) {
-    // 重新申请包含缺失 scope 的 delegation token。
+  if (
+    error instanceof EAKPermissionDeniedError ||
+    error instanceof EAKTokenExpiredError ||
+    error instanceof EAKDelegationRequiredError
+  ) {
+    // 重新 mint delegation token（补上缺失 scope / 刷新过期）后重试。
   }
 
-  if (error instanceof EAKRateLimitError || error instanceof EAKTimeoutError) {
-    // 业务允许时按退避策略重试。
+  if (
+    error instanceof EAKRateLimitError ||
+    error instanceof EAKTimeoutError ||
+    error instanceof EAKUpstreamError
+  ) {
+    // 瞬时错误——`error.retryable` 为 true 时退避重试。
   }
 
   throw error;
