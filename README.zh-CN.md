@@ -118,14 +118,14 @@ if (!userId) {
 // `products` 是按产品授权的糖；`agent` 可以不传，默认 "sdk"。
 const { token } = (
   await eak.delegateToken({
-    user: { subject: userId },
+    user: { id: userId },
     products: ["doAnything"],
   })
 ).data;
 
 const run = await eak.doAnything.run({
   token, // 入口传一次，句柄随后持有——句柄方法不再传 token
-  prompt: "打开客户官网并总结最近的产品变化。",
+  prompt: "打开 https://en.wikipedia.org/wiki/Singapore ，总结新加坡的关键信息（首都、人口、货币）。",
   capture: { screenshots: true },
 });
 
@@ -146,7 +146,7 @@ console.log(result.output);
 ```ts
 import { EAKEventTypes } from "@eazo/eak";
 
-const run = await eak.deepResearch.run({ token, prompt: "…" }); // RunHandle<DeepResearchEvent>
+const run = await eak.deepResearch.run({ token, prompt: "欧盟电池回收行业 2026 年现状" }); // RunHandle<DeepResearchEvent>
 
 for await (const event of run.events()) {
   switch (event.type) {
@@ -170,7 +170,7 @@ for await (const event of run.events()) {
 await run.cancel("用户停止任务"); // 幂等——对已结束的 run 调用也不会抛错
 const followUp = await eak.doAnything.run({
   token,
-  prompt: "再看一眼定价页。",
+  prompt: "再打开马来西亚的维基百科页面，把它的人口和新加坡做个对比。",
   session: run.sessionRef, // 复用同一个浏览器会话
 });
 const reattached = await eak.doAnything.attach(run.id, { token }); // 仅凭 run id 重连
@@ -260,7 +260,7 @@ await eak.gumem.recall({
 
 ```ts
 await eak.delegateToken({
-  user: { subject: userId },
+  user: { id: userId },
   products: ["doAnything", "webSearch", "deepResearch", "track"],
   scopes: ["gumem.memory:read"], // 可以和细粒度 scope 并用
 });
@@ -336,7 +336,7 @@ const context = await eak.gumem.recall({
 ```ts
 const run = await eak.doAnything.run({
   token,
-  prompt: "打开用户选择的产品页面，总结和当前任务相关的更新。",
+  prompt: "打开 https://en.wikipedia.org/wiki/Solid-state_battery ，总结它相对锂离子电池的主要优势。",
 });
 
 const status = await run.status(); // 刷新并返回当前状态
@@ -348,7 +348,7 @@ await run.cancel("用户停止任务"); // 幂等
 ```ts
 const search = await eak.webSearch.run({
   token,
-  prompt: "和用户当前任务相关的产品更新说明",
+  prompt: "欧盟电池回收法规 2026",
   maxResultsPerQuery: 5,
 });
 
@@ -384,7 +384,7 @@ const followUp = await eak.deepResearch.run({
 ```ts
 const monitor = await eak.track.create({
   token,
-  prompt: "盯着 https://example.com/pricing，价格有变动就通知我。",
+  prompt: "每分钟监控一次比特币价格。",
 });
 
 await monitor.runNow();

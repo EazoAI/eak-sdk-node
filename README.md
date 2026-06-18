@@ -123,14 +123,14 @@ if (!userId) {
 // `products` is per-product authorization sugar; `agent` defaults to "sdk".
 const { token } = (
   await eak.delegateToken({
-    user: { subject: userId },
+    user: { id: userId },
     products: ["doAnything"],
   })
 ).data;
 
 const run = await eak.doAnything.run({
   token, // passed once — the handle holds it; handle methods never take a token
-  prompt: "Open the customer website and summarize recent product updates.",
+  prompt: "Open https://en.wikipedia.org/wiki/Singapore and summarize the country's key facts.",
   capture: { screenshots: true },
 });
 
@@ -159,7 +159,7 @@ console.log(result.output);
 ```ts
 import { EAKEventTypes } from "@eazo/eak";
 
-const run = await eak.deepResearch.run({ token, prompt: "…" }); // RunHandle<DeepResearchEvent>
+const run = await eak.deepResearch.run({ token, prompt: "State of EU battery recycling, 2026 update" }); // RunHandle<DeepResearchEvent>
 
 for await (const event of run.events()) {
   switch (event.type) {
@@ -192,7 +192,7 @@ action apart inside `progress`. That's the escape hatch, not the everyday API.
 await run.cancel("user stopped the task"); // idempotent — safe on a finished run
 const followUp = await eak.doAnything.run({
   token,
-  prompt: "Now check the pricing page too.",
+  prompt: "Now open the Wikipedia page for Malaysia and compare its population with Singapore's.",
   session: run.sessionRef, // reuse the same browser session
 });
 const reattached = await eak.doAnything.attach(run.id, { token }); // re-attach by run id alone
@@ -280,7 +280,7 @@ Each WebAgent product exposes exactly two scopes: `read` (observe — status, ev
 
 ```ts
 await eak.delegateToken({
-  user: { subject: userId },
+  user: { id: userId },
   products: ["doAnything", "webSearch", "deepResearch", "track"],
   scopes: ["gumem.memory:read"], // fine-grained scopes can be mixed in
 });
@@ -356,7 +356,7 @@ const context = await eak.gumem.recall({
 ```ts
 const run = await eak.doAnything.run({
   token,
-  prompt: "Open the user's selected product page and summarize updates relevant to their current task.",
+  prompt: "Open https://en.wikipedia.org/wiki/Solid-state_battery and summarize its key advantages over lithium-ion.",
 });
 
 const status = await run.status(); // refresh the run's current state
@@ -368,7 +368,7 @@ await run.cancel("User stopped the task"); // idempotent
 ```ts
 const search = await eak.webSearch.run({
   token,
-  prompt: "product update notes relevant to the user's current task",
+  prompt: "EU battery recycling regulations 2026",
   maxResultsPerQuery: 5,
 });
 
@@ -404,7 +404,7 @@ const followUp = await eak.deepResearch.run({
 ```ts
 const monitor = await eak.track.create({
   token,
-  prompt: "Watch https://example.com/pricing and tell me when the price changes.",
+  prompt: "Monitor the price of Bitcoin every minute.",
 });
 
 await monitor.runNow();

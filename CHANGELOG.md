@@ -8,6 +8,20 @@ compatible fixes.
 
 ## Unreleased
 
+## 0.3.1 - 2026-06-18
+
+Documentation-only release; no SDK code changes.
+
+### Fixed
+
+- README delegation examples passed `user: { subject: userId }`, but `UserRef`
+  requires `id` and the SDK only reads `user.id` — as written the silent
+  delegation throws `eak.delegation.user_id_required`. Corrected to
+  `user: { id: userId }` in both README.md and README.zh-CN.md.
+- Replaced non-runnable placeholder example prompts (an undefined "customer
+  website", a literal `…`, a fake `example.com/pricing`) with concrete,
+  live-verified prompts so copy-pasted examples actually execute.
+
 ## 0.3.0 - 2026-06-18
 
 Semantic-layer public surface per the frozen contract. **Breaking** — the
