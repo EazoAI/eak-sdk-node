@@ -272,6 +272,29 @@ describe("EazoAgentKit", () => {
     });
   });
 
+  it("rejects a silent delegateToken with no user locally, before any request", async () => {
+    let fetched = false;
+    const client = new EazoAgentKit({
+      accessKey: "ak_test",
+      secretKey: "sk_test",
+      fetch: (async () => {
+        fetched = true;
+        return jsonResponse({ data: {}, meta: {} });
+      }) as typeof fetch,
+    });
+
+    await expect(
+      // No `user` / `userId` and not interactive — must fail locally.
+      (client.delegateToken as (input: unknown) => Promise<unknown>)({
+        products: ["doAnything"],
+      }),
+    ).rejects.toMatchObject({
+      name: "EAKValidationError",
+      message: expect.stringContaining("silent mode requires a user"),
+    });
+    expect(fetched).toBe(false);
+  });
+
   it("normalizes interactive delegateToken state into grantState and state", async () => {
     const client = new EazoAgentKit({
       accessKey: "ak_test",
