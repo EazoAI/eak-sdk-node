@@ -42,11 +42,11 @@ export type MonitorSchedule =
 
 /**
  * Fields to change on a monitor via {@link MonitorHandle.refine}. Pass any
- * subset; at least one is required. `prompt` updates the monitor's intent.
+ * subset; at least one is required. The monitor's natural-language `intent`
+ * is NOT refinable — it drives URL/schema/DSL generation, so changing it means
+ * creating a new monitor.
  */
 export interface MonitorRefinePatch {
-  /** Natural-language intent (maps to the monitor's `intent`). */
-  prompt?: string;
   schedule?: MonitorSchedule;
   targetUrls?: string[];
   extractionSchema?: JsonObject;
@@ -100,19 +100,19 @@ export class MonitorHandle {
 
   /**
    * Change the monitor definition. Pass any subset of fields (at least one);
-   * `prompt` updates the intent and `schedule` is `{ kind: "cron", expr }` or
-   * `{ kind: "interval", intervalSeconds }`. The backend re-validates the
-   * trigger DSL against the schema, so a bad change is rejected, not applied.
+   * `schedule` is `{ kind: "cron", expr }` or `{ kind: "interval", intervalSeconds }`.
+   * The backend re-validates the trigger DSL against the schema, so a bad
+   * change is rejected, not applied. The natural-language intent is not
+   * refinable — create a new monitor to change it.
    */
   async refine(patch: MonitorRefinePatch): Promise<JsonObject> {
-    const { prompt, schedule, ...rest } = patch;
+    const { schedule, ...rest } = patch;
     const body: JsonObject = snakeifyKeys(rest as JsonObject);
-    if (typeof prompt === "string") body.intent = prompt;
     if (schedule) body.schedule = normalizeSchedule(schedule);
     if (Object.keys(body).length === 0) {
       throw new EAKValidationError(
-        "track refine requires at least one field to change (prompt / schedule / " +
-          "targetUrls / extractionSchema / triggerDsl / stopConditionDsl / notifyChannel)",
+        "track refine requires at least one field to change (schedule / targetUrls / " +
+          "extractionSchema / triggerDsl / stopConditionDsl / notifyChannel)",
       );
     }
     return camelizeRecord(await this.ops.update({ action: "refine", patch: body }));

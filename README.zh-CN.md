@@ -417,8 +417,10 @@ for await (const event of monitor.events()) {
 await monitor.runNow();                     // 立即触发一次 tick
 const ticks = await monitor.runs({ limit: 10 }); // tick 产生的 run 只读列表
 
-// 用 refine() 改定义（任意字段子集；`prompt` 改意图）。`schedule` 是
-// { kind: "cron", expr } 或 { kind: "interval", intervalSeconds }：
+// 用 refine() 改定义（任意字段子集：schedule / targetUrls / extractionSchema /
+// triggerDsl / stopConditionDsl / notifyChannel）。`schedule` 是
+// { kind: "cron", expr } 或 { kind: "interval", intervalSeconds }。
+// 自然语言意图不可 refine——要改描述请新建 monitor：
 await monitor.refine({ schedule: { kind: "cron", expr: "0 9 * * *" } });
 await monitor.pause();   // 停掉定时 tick 但不删除
 await monitor.resume();

@@ -846,13 +846,13 @@ describe("track.create → MonitorHandle", () => {
 
     await monitor.pause();
     await monitor.resume();
-    await monitor.refine({ prompt: "watch the pricing page instead" });
+    await monitor.refine({ targetUrls: ["https://eazo.ai/pricing"] });
 
     const patchBodies = calls.filter((c) => c.method === "PATCH").map((c) => c.body);
     expect(patchBodies).toEqual([
       { action: "pause" },
       { action: "resume" },
-      { action: "refine", patch: { intent: "watch the pricing page instead" } },
+      { action: "refine", patch: { target_urls: ["https://eazo.ai/pricing"] } },
     ]);
 
     // A refine with nothing to change fails locally, before any request.

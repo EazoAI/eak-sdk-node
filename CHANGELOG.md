@@ -8,6 +8,18 @@ compatible fixes.
 
 ## Unreleased
 
+## 0.3.4 - 2026-06-18
+
+### Fixed
+
+- `refine()` no longer accepts `prompt`. It mapped to `patch.intent`, but the
+  backend `RefinePatch` is `extra="forbid"` with no `intent` field, so
+  `refine({ prompt })` 422'd with `validation_error` (while `schedule` /
+  `targetUrls` / etc. worked). The monitor's natural-language intent drives
+  URL/schema/DSL generation and is deliberately not refinable — create a new
+  monitor to change it. Removed `prompt` from `MonitorRefinePatch`; README and
+  types updated to match.
+
 ## 0.3.3 - 2026-06-18
 
 ### Changed
@@ -17,9 +29,8 @@ compatible fixes.
   The old passthrough sent a body with no `action` discriminator, so the
   backend always rejected it with `validation_error` — it never worked as
   documented, so no functioning code relied on it. `refine()` takes a
-  `MonitorRefinePatch` (camelCase; `prompt` maps to the monitor's intent) and
-  normalizes `schedule` (`{ kind: "cron", expr }` /
-  `{ kind: "interval", intervalSeconds }`).
+  camelCase `MonitorRefinePatch` and normalizes `schedule`
+  (`{ kind: "cron", expr }` / `{ kind: "interval", intervalSeconds }`).
 
 ### Fixed
 
