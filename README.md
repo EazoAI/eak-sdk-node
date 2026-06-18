@@ -446,9 +446,10 @@ for await (const event of monitor.events()) {
 await monitor.runNow();                     // trigger an immediate tick
 const ticks = await monitor.runs({ limit: 10 }); // read-only tick run views
 
-// Change the definition with refine() (any subset of fields; `prompt` updates
-// the intent). `schedule` is { kind: "cron", expr } or { kind: "interval",
-// intervalSeconds }:
+// Change the definition with refine() (any subset of: schedule / targetUrls /
+// extractionSchema / triggerDsl / stopConditionDsl / notifyChannel). `schedule`
+// is { kind: "cron", expr } or { kind: "interval", intervalSeconds }. The
+// natural-language intent isn't refinable — create a new monitor to change it:
 await monitor.refine({ schedule: { kind: "cron", expr: "0 9 * * *" } });
 await monitor.pause();   // stop scheduled ticks without deleting
 await monitor.resume();
