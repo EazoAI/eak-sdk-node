@@ -8,6 +8,33 @@ compatible fixes.
 
 ## Unreleased
 
+## 0.3.3 - 2026-06-18
+
+### Changed
+
+- `MonitorHandle.update(input)` is replaced by intent-revealing methods that
+  match the backend's monitor FSM: `pause()`, `resume()`, and `refine(patch)`.
+  The old passthrough sent a body with no `action` discriminator, so the
+  backend always rejected it with `validation_error` — it never worked as
+  documented, so no functioning code relied on it. `refine()` takes a
+  `MonitorRefinePatch` (camelCase; `prompt` maps to the monitor's intent) and
+  normalizes `schedule` (`{ kind: "cron", expr }` /
+  `{ kind: "interval", intervalSeconds }`).
+
+### Fixed
+
+- `RunResult.terminalReason` is now populated from the terminal `done` event
+  when the run-detail envelope omits it (previously `undefined` even though
+  the stream delivered the reason).
+
+### Documentation
+
+- Track example: document the `pending_clarification` → `active` lifecycle —
+  `runNow()` / `refine()` require `active`, so a freshly created monitor must
+  reach `active` first (the old `create()` → `runNow()` snippet raced it).
+- Replace the wrong `update({ schedule: "0 9 * * *" })` with
+  `refine({ schedule: { kind: "cron", expr: "0 9 * * *" } })`.
+
 ## 0.3.2 - 2026-06-18
 
 ### Fixed

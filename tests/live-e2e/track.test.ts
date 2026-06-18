@@ -78,7 +78,7 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
     expect(Object.keys(data).some((key) => key.includes("_"))).toBe(false);
   });
 
-  it("monitor.update() is observable on monitor.events()", async () => {
+  it("monitor.refine() is observable on monitor.events()", async () => {
     const monitor = await ensureMonitor();
     if (!monitor) return;
     const eventsPromise = collectRunEvents((signal) => monitor.events({ signal }), {
@@ -87,12 +87,9 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
       until: (event) => event.raw.event === "monitor.lifecycle_changed",
     });
     await new Promise((resolve) => setTimeout(resolve, 500));
-    await monitor.update({
-      action: "refine",
-      patch: {
-        schedule: { kind: "interval", interval_seconds: 5400 },
-        trigger_dsl: { on: "change" },
-      },
+    await monitor.refine({
+      schedule: { kind: "interval", intervalSeconds: 5400 },
+      triggerDsl: { on: "change" },
     });
     await eventsPromise;
   });
@@ -121,12 +118,9 @@ describeLiveE2E("live e2e: Track (semantic surface)", () => {
   it("records a RECURRING scheduler-driven cadence to disk via event.raw", async () => {
     const monitor = await ensureMonitor();
     if (!monitor) return;
-    await monitor.update({
-      action: "refine",
-      patch: {
-        schedule: { kind: "interval", interval_seconds: INTERVAL_SECONDS },
-        trigger_dsl: { on: "change" },
-      },
+    await monitor.refine({
+      schedule: { kind: "interval", intervalSeconds: INTERVAL_SECONDS },
+      triggerDsl: { on: "change" },
     });
 
     const recorder = openRawEventRecorder(`track-${monitor.id}`);

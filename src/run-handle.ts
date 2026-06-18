@@ -157,6 +157,7 @@ export class RunHandle<E extends RunEvent = RunEvent> {
     let eventIdAtLastClose: string | undefined;
     let sawCleanClose = false;
     let terminalPayload: JsonObject | undefined;
+    let terminalDoneReason: string | undefined;
     let screenshotIndex = 0;
 
     try {
@@ -175,6 +176,10 @@ export class RunHandle<E extends RunEvent = RunEvent> {
             terminalPayload = isJsonObject(event.raw.data)
               ? (event.raw.data as JsonObject)
               : undefined;
+            // The `done` event carries terminalReason even when the detail
+            // envelope omits it — keep it as a fallback so RunResult isn't
+            // missing a reason the stream already delivered.
+            if (event.type === "done") terminalDoneReason = event.data.terminalReason || undefined;
             break settled;
           }
         }
@@ -218,7 +223,7 @@ export class RunHandle<E extends RunEvent = RunEvent> {
     }
     this.#adoptSessionRef(detail);
     const artifacts = this.ops.listArtifacts ? await this.ops.listArtifacts() : [];
-    return settleRunResult(this.id, detail, artifacts);
+    return settleRunResult(this.id, detail, artifacts, terminalDoneReason);
   }
 
   /**
@@ -272,9 +277,15 @@ export function normalizeRunStatus(id: string, detail: JsonObject): RunStatus {
   };
 }
 
-function settleRunResult(runId: string, detail: JsonObject, artifacts: Artifact[]): RunResult {
+function settleRunResult(
+  runId: string,
+  detail: JsonObject,
+  artifacts: Artifact[],
+  fallbackTerminalReason?: string,
+): RunResult {
   const terminalReason =
-    typeof detail.terminal_reason === "string" ? detail.terminal_reason : undefined;
+    (typeof detail.terminal_reason === "string" ? detail.terminal_reason : undefined) ??
+    fallbackTerminalReason;
   const isTaskSuccessful =
     typeof detail.is_task_successful === "boolean" ? detail.is_task_successful : undefined;
   let status: RunResult["status"];

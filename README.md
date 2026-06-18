@@ -429,12 +429,29 @@ const monitor = await eak.track.create({
   prompt: "Monitor the price of Bitcoin every minute.",
 });
 
-await monitor.runNow();
+// A new monitor starts in `pending_clarification` while the backend aligns
+// the intent into a concrete spec, then flips to `active` (usually a few
+// seconds; it may emit an `interaction` first if the intent is ambiguous).
+// runNow()/refine() require `active`, so wait for it before acting:
+for await (const event of monitor.events()) {
+  if (event.type === "interaction") {
+    const i = monitor.interactionHandle(event.data); // e.g. a needs-reauth site_login
+    if (i.can("confirm")) await i.confirm();
+    continue;
+  }
+  const { status } = await monitor.get();
+  if (status === "active") break;
+}
+
+await monitor.runNow();                     // trigger an immediate tick
 const ticks = await monitor.runs({ limit: 10 }); // read-only tick run views
-// HITL on a monitor (e.g. a needs-reauth site_login) arrives as an
-// `interaction` event on monitor.events(); act on it via the typed handle:
-//   const i = monitor.interactionHandle(event.data); await i.confirmSignedIn();
-await monitor.update({ schedule: "0 9 * * *" });
+
+// Change the definition with refine() (any subset of fields; `prompt` updates
+// the intent). `schedule` is { kind: "cron", expr } or { kind: "interval",
+// intervalSeconds }:
+await monitor.refine({ schedule: { kind: "cron", expr: "0 9 * * *" } });
+await monitor.pause();   // stop scheduled ticks without deleting
+await monitor.resume();
 await monitor.delete();
 
 // Reconnect later from a stored id:
@@ -546,7 +563,7 @@ is the typed payload for that call (e.g. `genauth.users.list` → a paged user
 list on `.data`). The exact `T` shapes live in the bundled `.d.ts` and follow
 the backend contract.
 
-`MonitorHandle` (Track) exposes `id`, `get()`, `update()`, `runNow()`, `events()`, `interactionHandle()`, `runs()`, `run(runId)`, and `delete()`.
+`MonitorHandle` (Track) exposes `id`, `get()`, `pause()`, `resume()`, `refine(patch)`, `runNow()`, `events()`, `interactionHandle()`, `runs()`, `run(runId)`, and `delete()`. `runNow()` and `refine()` require the monitor to be `active` — a freshly created monitor is briefly `pending_clarification` first (see the Track example).
 
 ### Interactions (HITL)
 
