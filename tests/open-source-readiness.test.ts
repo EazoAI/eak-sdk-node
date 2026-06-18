@@ -118,7 +118,7 @@ describe("open-source readiness", () => {
     expect(ci).toContain("if: '$CI_COMMIT_BRANCH'");
     expect(ci).toContain('if: \'$CI_COMMIT_BRANCH == "main"\'');
     expect(ci).toContain("if: '$CI_COMMIT_TAG =~ /^v/'");
-    expect(ci).toContain('git push github "${CI_COMMIT_SHA}:refs/heads/${CI_COMMIT_REF_NAME}"');
+    expect(ci).toContain('git push --no-thin github "${CI_COMMIT_SHA}:refs/heads/${CI_COMMIT_REF_NAME}"');
     expect(ci).toMatch(/- if: '\$CI_COMMIT_BRANCH'\n\s+when: manual\n\s+allow_failure: true/);
     expect(ci).toContain("npm whoami");
     expect(ci).toContain("npm org ls eazo --json");
